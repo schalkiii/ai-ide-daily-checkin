@@ -1,0 +1,14 @@
+{
+  "_comment": "可选：多账号 / 免本地解密时，把此文件复制为 auths.json。checkin_qoder.py 会优先读 auths.json，否则回退到本机客户端登录态解密。Trae / WorkBuddy 直接读各自客户端登录态，不需要此文件。",
+  "_howto": "每项是从 auth.v1.dat 解出的对象：{token, refreshToken, expiresAt, user}。单账号写成对象，多账号写成数组。token 属敏感信息，切勿提交到仓库（.gitignore 已忽略 auths.json）。",
+  "_example_single": {
+    "token": "<Qoder CN access token>",
+    "refreshToken": "<refresh token>",
+    "expiresAt": "2026-10-10T06:49:23Z",
+    "user": { "id": "123456", "name": "your-name" }
+  },
+  "_example_multi": [
+    { "token": "<token-A>", "user": { "id": "A", "name": "acct-A" } },
+    { "token": "<token-B>", "user": { "id": "B", "name": "acct-B" } }
+  ]
+}

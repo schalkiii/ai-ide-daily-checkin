@@ -1,0 +1,4 @@
+# 三个签到脚本的第三方依赖
+requests>=2.31          # HTTP 调用官方接口
+cryptography>=42        # Qoder CN：AES-256-GCM (AESGCM)
+pycryptodome>=3.20      # Trae CN / WorkBuddy：Crypto.Cipher (AES-CBC / AES-GCM)
