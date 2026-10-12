@@ -10,6 +10,11 @@
 #   Re-run this after changing your Windows password to refresh the stored
 #   credential. The password is held by the OS (LSA); it is never written here.
 #
+# The password is typed in THIS console (masked), not via a GUI dialog:
+#   $Host.UI.PromptForCredential sometimes renders no window at all inside a
+#   plain console host, so the old version silently got nothing. Read-Host
+#   -AsSecureString always works in an interactive console.
+#
 # ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as the ANSI/GBK code
 # page unless the file has a UTF-8 BOM, so Chinese text here would mis-parse.
 #Requires -Version 5
@@ -34,21 +39,34 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
 
+$account = ('{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME)
+
 Write-Host ("Task '" + $TaskName + "': daily at " + $Time + " , run WHETHER OR NOT logged on (stored password; DPAPI still works).")
-Write-Host 'Enter your Windows account password so DPAPI can decrypt in a non-interactive session.'
+Write-Host ("Account: " + $account)
+Write-Host 'Type your Windows account password below (input is hidden). Needed so DPAPI can decrypt in a non-interactive session.'
+
+$secure = Read-Host 'Windows password' -AsSecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+if ([string]::IsNullOrEmpty($plain)) { Write-Warning 'Empty password. Task not registered.'; exit 1 }
+
+try {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
+        -User $account -Password $plain -RunLevel Limited -Force | Out-Null
+}
+catch {
+    $plain = $null
+    Write-Error ("Registration failed (wrong password or logon-right denied): " + $_.Exception.Message)
+    Write-Host 'Tip: your account may need the "Log on as a batch job" right; retry with the correct password.'
+    exit 1
+}
+$plain = $null
+
+$next = (Get-ScheduledTaskInfo -TaskName $TaskName).NextRunTime
 Write-Host ''
-
-$cred = $host.ui.PromptForCredential(
-    'AI daily check-in - task credential',
-    'Windows account password for the scheduled task (required for DPAPI):',
-    ($env:USERDOMAIN + '\' + $env:USERNAME), '')
-if (-not $cred) { Write-Warning 'Cancelled. Task not registered.'; exit 1 }
-
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -User $cred.Target -Password $cred.GetNetworkCredential().Password -RunLevel Limited -Force | Out-Null
-
-Write-Host ''
-Write-Host 'Registered. Verify the logon mode (should NOT be an interactive-only / S4U task):'
-Write-Host ('  schtasks /Query /TN "' + $TaskName + '" /FO LIST /V')
-Write-Host ('Run it now and then open checkin.log:  schtasks /Run /TN "' + $TaskName + '"')
-Write-Host 'Remove later:  uninstall-schedule.bat'
+Write-Host ("[OK] Registered '" + $TaskName + "' daily at " + $Time + " (run whether logged on, StartWhenAvailable).")
+Write-Host ('  next run: ' + $next)
+Write-Host ('  verify : schtasks /Query /TN "' + $TaskName + '" /FO LIST /V   (Logon Mode should be "Run whether user is logged on or not")')
+Write-Host ('  test   : schtasks /Run /TN "' + $TaskName + '"  then open checkin.log')
+Write-Host ('  remove : uninstall-schedule.bat')
