@@ -105,7 +105,8 @@ install-schedule.bat
 - 自定义时间：`install-schedule.bat 08:30`
 - 用 `pythonw.exe`（venv 优先）无窗口后台执行 `checkin.py all`。
 - **默认改为「不管用户是否登录都要运行」**（`install-schedule.bat` → `install-schedule.ps1` 用 `Register-ScheduledTask -User .. -Password ..`）：
-  Task Scheduler 会用保存的凭据做一次 Batch 登录并加载用户配置文件，**DPAPI 仍能解密**，各家照常工作；
+  运行脚本时会在**控制台内**提示你输入 Windows 登录密码（隐藏回显，不是 GUI 弹窗；旧版用 `PromptForCredential` 在无 GUI 宿主下会静默不弹窗，已改）。
+  Task Scheduler 会用保存的凭据做一次 Batch 登录并加载用户配置文件，**DPAPI 仍能解密**，各家照常工作（已实测：无人值守批处理登录下四家全跑通、`lastResult=0`）；
   另加 `-StartWhenAvailable`，错过时间点（关机/睡眠）后开机尽快补跑。
 - ⚠️ **DPAPI 冲突（关键）**：四家都靠 `CryptUnprotectData`（用户主密钥）。「不管是否登录都要运行」**只有『保存了密码』(Password 登录类型) 时才工作**；
   若配成「不保存密码 / S4U / 服务账户」，无明文凭据 → `CryptUnprotectData failed` → 全部失败。
