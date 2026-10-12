@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""统一签到入口：按参数调度三个产品的签到脚本。
+"""统一签到入口：按参数调度四个产品的签到脚本。
 
-    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy
+    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy / 库库AI
     python checkin.py qoder claim    # 只跑 Qoder，并把参数透传给 checkin_qoder.py
     python checkin.py trae
     python checkin.py workbuddy
-    python checkin.py all --dry-run  # --dry-run 只对支持的脚本（Qoder）生效，其余忽略
+    python checkin.py kuku
+    python checkin.py all --dry-run  # --dry-run 只透传给支持的脚本（Qoder / 库库），其余忽略
 
-三家互相独立：某个客户端未安装/未登录只会让该家失败，不影响其余。
+四家互相独立：某个客户端未安装/未登录只会让该家失败，不影响其余。
 最终退出码 = 所有已尝试脚本退出码的按位或（0 表示全部成功）。
-计划任务里用一条 `pythonw checkin.py all` 即可覆盖三家。
+计划任务里用一条 `pythonw checkin.py all` 即可覆盖四家。
 """
 import os
 import subprocess
@@ -17,10 +18,13 @@ import sys
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 # 名称 -> (脚本文件, 该脚本自身接受的默认参数)
+# 支持 --dry-run 的脚本；其余家传入 --dry-run 会被 argparse 拒绝，故在下面过滤掉
+DRY_RUN_CAPABLE = {"qoder", "kuku"}
 SCRIPTS = {
     "qoder": ("checkin_qoder.py", []),
     "trae": ("checkin_trae.py", []),
     "workbuddy": ("checkin_workbuddy.py", []),
+    "kuku": ("checkin_kuku.py", []),
 }
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -45,18 +49,18 @@ def main(argv: list[str]) -> int:
 
     target, *rest = argv
     if target == "all":
-        order = ["qoder", "trae", "workbuddy"]
+        order = ["qoder", "trae", "workbuddy", "kuku"]
     elif target in SCRIPTS:
         order = [target]
     else:
         # 未知目标：当作全部，并把该 token 一并透传（容错）
         print(f"未识别目标 '{target}'，按 all 处理；额外参数透传。", file=sys.stderr)
-        order, rest = ["qoder", "trae", "workbuddy"], argv
+        order, rest = ["qoder", "trae", "workbuddy", "kuku"], argv
 
     rc = 0
     for name in order:
-        # --dry-run 仅 Qoder 支持；对 Trae / WorkBuddy 过滤掉，避免 argparse 报错
-        args = [a for a in rest if not (name != "qoder" and a == "--dry-run")]
+        # --dry-run 仅 Qoder / 库库 支持；对其余家过滤掉，避免 argparse 报错
+        args = [a for a in rest if not (name not in DRY_RUN_CAPABLE and a == "--dry-run")]
         rc |= run(name, args)
     print(f"\n全部完成，聚合退出码 = {rc}")
     return rc
