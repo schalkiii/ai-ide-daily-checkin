@@ -25,7 +25,7 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 - 四家均幂等：已签到重复跑不会重复发放。
 - 计划任务「不管是否登录都运行」**只有『保存了密码』(Password 登录类型) 时 DPAPI 才能非交互解密**；
   S4U / 服务账户 → `CryptUnprotectData failed` 全失败。改 Windows 密码后需重跑 `install-schedule.bat` 刷新凭据。
-- 库库 `daily_chat`（完成一次对话）须**已有一次真实对话**才 claimable（脱机只领已可领的）；`daily_login` 纯脱机可领。
+- 库库 `daily_login` 与 `daily_chat` 现在都可纯脱机领满 100 分：`daily_chat` 先调 `/freepoint/taskComplete`（`task_type=CHAT`）客户端完成信号置为可领再 `rewardClaim`（实测服务端不校验真实对话）；`invite_*` 需真实邀请不自助完成。
 - 库库 `errno=-6` = STOKEN 陈旧：正常打开库库再优雅退出让其落盘，或改用 CDP 项目领取。
 
 ## 分工 / 安全红线

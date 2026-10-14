@@ -17,12 +17,16 @@
     cookie 来源（DB / 缓存）会先用 homenew 校验，只有 errno=0 的才回写缓存，
     因此陈旧 STOKEN（客户端被强杀未落盘时）不会污染缓存；BDUSS 约 30 天有效。
 
-接口（逆向自客户端 app.asar 的 freepoint 模块，Go 端 RewardClaimReqDto）：
+接口（逆向自客户端 app.asar 的 freepoint 模块，Go 端 RewardClaimReqDto / TaskCompleteReqDto）：
     GET  /api/genflowpro/freepoint/homenew?app_id=123971023&channel=chunlei&version=1.6.9&clienttype=401
     POST /api/genflowpro/freepoint/rewardClaim?<同上 query>
          body(x-www-form-urlencoded): activity_key, period_id(=homenew 的 period_no), task_key
-    响应 errno=0；data.claim_status=SUCCESS 领取成功；task_status: UNFINISHED / FINISHED
-    两个每日奖励：daily_login(每日登录 +50)、daily_chat(完成一次对话 +50，需先真实对话才变 claimable)
+    POST /api/genflowpro/freepoint/taskComplete?<同上 query>
+         body: activity_key, period_id, task_key, task_type(=任务对象的 task_type)
+    响应 errno=0；claim_status / complete_status=SUCCESS 成功；task_status: UNFINISHED / FINISHED
+    两个每日奖励：daily_login(每日登录 +50)、daily_chat(完成一次对话 +50)。
+    daily_chat 可用 taskComplete 客户端信号置为可领（服务端不校验是否真的对话过），
+    因此本脚本能纯脱机一次领满这 100 分；invite_* 需真实邀请，不做自助完成。
 
 用法：
     python checkin_kuku.py            # 读取登录态并领取所有可领取任务
@@ -243,6 +247,19 @@ def claim(cookie_header: str, activity_key: str, period_id, task_key: str) -> di
     return r.json()
 
 
+def task_complete(cookie_header: str, activity_key: str, period_id, task_key: str, task_type: str) -> dict:
+    """客户端任务完成信号：对 daily_chat 这类 task_type=CHAT 的任务调用后置为可领。
+
+    服务端不校验是否真的发生过对话（实测 errno=0 / complete_status=SUCCESS 后 claimable 变 50）。
+    """
+    r = requests.post(
+        f"{API_BASE}/taskComplete", params=COMMON, headers=headers(cookie_header),
+        data={"activity_key": activity_key, "period_id": str(period_id),
+              "task_key": task_key, "task_type": task_type},
+        timeout=30)
+    return r.json()
+
+
 def tasks_of(doc: dict):
     act = (doc.get("data") or {}).get("activities") or []
     if not act:
@@ -281,9 +298,27 @@ def main() -> int:
         log(f"  {t.get('task_key'):20} {t.get('task_name'):8} "
             f"status={t.get('task_status'):10} claimable={t.get('claimable_point')}")
 
+    # daily_chat 等 task_type=CHAT 的任务可经官方 taskComplete 客户端信号置为可领（服务端不校验是否
+    # 真的对话过）；调用后刷新任务列表，下面按 claimable>0 统一领取。invite 类需真实邀请，不自助完成。
+    if not args.dry_run:
+        completable = [t for t in tasks
+                       if t.get("task_type") == "CHAT"
+                       and t.get("task_status") == "UNFINISHED"
+                       and (t.get("claimable_point") or 0) == 0]
+        for t in completable:
+            res = task_complete(ck, act["activity_key"], act.get("period_no"),
+                                t["task_key"], t.get("task_type"))
+            d = res.get("data") or {}
+            if res.get("errno") == 0 and d.get("complete_status") == "SUCCESS":
+                log(f"  自助完成 {t['task_key']}（taskComplete，reward_point={d.get('reward_point')}）")
+            else:
+                log(f"  自助完成 {t['task_key']} 失败：errno={res.get('errno')} {res.get('show_msg')}")
+        if completable:
+            act, tasks = tasks_of(homenew(ck))  # 刷新：CHAT 任务已变可领
+
     targets = [t for t in tasks if (t.get("claimable_point") or 0) > 0]
     if not targets:
-        log("没有可领取的任务（可能今日已领，或 daily_chat 需先真实对话）")
+        log("没有可领取的任务（今日已领，或仅剩需真实邀请的 invite 任务）")
         return 0
     if args.dry_run:
         log(f"[dry-run] 将领取：{[t['task_key'] for t in targets]}")

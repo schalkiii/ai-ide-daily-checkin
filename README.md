@@ -33,11 +33,11 @@
 | **Qoder CN** | `%APPDATA%\com.qodercn.app.stable\` 下 `Local State` + `auth.v1.dat` | DPAPI 解出 AES-256 key → AES-GCM 解 auth.v1.dat | `GET /sash/api/v1/me/campaigns`；`POST .../campaigns/{id}/claim` | `Authorization: Bearer <token>` + **`Cosy-ClientType: 10`**（缺它 campaigns 返回空数组） |
 | **Trae CN / SOLO** | `%APPDATA%\Trae CN\User\globalStorage\storage.json` 的 `iCubeAuthInfo://icube.cloudide` | 自定义：SHA-512 派生 + AES-CBC + 去 64B HMAC | `POST .../checkin_credits/status`；`POST .../checkin_credits/claim` | `Authorization: Cloud-IDE-JWT <token>` + `x-device-id` + `X-User-Region` |
 | **WorkBuddy** | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\*.info` | 5.6.0 前明文；5.6.0 起 `$wbEncrypted`（AES-256-GCM，at-rest 密钥派生） | `POST /v2/billing/meter/checkin-status`；`POST .../daily-checkin` | `Authorization: Bearer <accessToken>` + `X-User-Id` + `X-Domain` |
-| **库库AI (GenFlowPro)** | `%APPDATA%\baidugenflowpro\Network\Cookies`（默认上下文仓） | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-GCM 解 BDUSS/STOKEN | `GET /api/genflowpro/freepoint/homenew`；`POST .../rewardClaim` | 仅 `Cookie: BDUSS=..; STOKEN=..; gfprotpl=genflowpro`（**无 Authorization/签名**） |
+| **库库AI (GenFlowPro)** | `%APPDATA%\baidugenflowpro\Network\Cookies`（默认上下文仓） | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-GCM 解 BDUSS/STOKEN | `GET /api/genflowpro/freepoint/homenew`；`POST .../taskComplete`（置对话任务为可领）；`POST .../rewardClaim` | 仅 `Cookie: BDUSS=..; STOKEN=..; gfprotpl=genflowpro`（**无 Authorization/签名**） |
 
 四家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`），重复运行不会重复发放，乱点无害。
 
-库库的两项每日奖励：`daily_login`（每日登录）纯脱机即可领；`daily_chat`（完成一次对话）**必须已有一次真实对话**（用 CDP 项目或手动都行）才会变 claimable——脱机脚本只负责“已可领时领取”，不会替你去对话。
+库库的两项每日奖励 `daily_login`（每日登录）与 `daily_chat`（完成一次对话）现在**都能纯脱机领满 100 分**：`daily_chat` 由脚本先调 `POST .../freepoint/taskComplete`（`task_type=CHAT`）这一客户端完成信号置为可领，再 `rewardClaim` 领取（实测服务端接受该信号、不校验是否真的对话过）。`invite_*` 需真实邀请，不自助完成。若不想用这种「无真实对话也标完成」的领法，可改用姊妹 CDP 项目 `kuku-ai-daily-checkin` 真发一条消息后再领。
 
 ---
 
