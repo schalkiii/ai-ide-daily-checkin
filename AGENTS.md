@@ -25,7 +25,7 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 - 四家均幂等：已签到重复跑不会重复发放。
 - 计划任务「不管是否登录都运行」**只有『保存了密码』(Password 登录类型) 时 DPAPI 才能非交互解密**；
   S4U / 服务账户 → `CryptUnprotectData failed` 全失败。改 Windows 密码后需重跑 `install-schedule.bat` 刷新凭据。
-- 库库 `daily_login` 与 `daily_chat` 现在都可纯脱机领满 100 分：`daily_chat` 先调 `/freepoint/taskComplete`（`task_type=CHAT`）客户端完成信号置为可领再 `rewardClaim`（实测服务端不校验真实对话）；`invite_*` 需真实邀请不自助完成。
+- 库库旧 `freepoint`（daily_login/daily_chat）于 2026-10-15 已下线（homenew 返回空 activities），`checkin_kuku.py` 现对库库安全 no-op；新活动「金秋厚礼」走 `comps/view` 且每请求需 App 注入的 `window.jsToken`，脱机无法生成 → 库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取。
 - 库库 `errno=-6` = STOKEN 陈旧：正常打开库库再优雅退出让其落盘，或改用 CDP 项目领取。
 
 ## 分工 / 安全红线

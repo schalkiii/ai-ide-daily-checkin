@@ -37,7 +37,9 @@
 
 四家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`），重复运行不会重复发放，乱点无害。
 
-库库的两项每日奖励 `daily_login`（每日登录）与 `daily_chat`（完成一次对话）现在**都能纯脱机领满 100 分**：`daily_chat` 由脚本先调 `POST .../freepoint/taskComplete`（`task_type=CHAT`）这一客户端完成信号置为可领，再 `rewardClaim` 领取（实测服务端接受该信号、不校验是否真的对话过）。`invite_*` 需真实邀请，不自助完成。若不想用这种「无真实对话也标完成」的领法，可改用姊妹 CDP 项目 `kuku-ai-daily-checkin` 真发一条消息后再领。
+> ⚠️ **2026-10-15 活动改版**：库库旧 `freepoint`（`daily_login`/`daily_chat` 各 +50）已**下线**——`homenew` 现返回空 `activities`，本脱机 provider 对库库当前不再产出（`checkin_kuku.py` 安全 no-op）。新活动「金秋厚礼」走 `kuku.baidu.com/comps/view` 且每个请求都带 App 注入的 `window.jsToken`，**脱机无法生成该令牌**，故库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取（连签送 SVIP + 对话积分+10）。
+
+（以下为改版前 freepoint 脱机方案的**历史说明**，接口现均已下线）库库旧 freepoint 的 `daily_login`/`daily_chat` 曾可纯脱机领满 100：`daily_chat` 先调 `POST .../freepoint/taskComplete`（`task_type=CHAT`）置为可领再 `rewardClaim`（实测服务端曾接受该信号、不校验是否真对话过）；`invite_*` 需真实邀请。
 
 ---
 
