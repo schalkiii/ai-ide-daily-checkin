@@ -1,0 +1,4 @@
+{
+  "_comment": "复制为 config.json 并填入你的飞书群机器人 webhook；checkin.py 汇总推送会读取 feishuWebhook 字段。config.json 含私有 webhook，已被 .gitignore 忽略，勿提交。",
+  "feishuWebhook": "https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_WITH_YOUR_WEBHOOK"
+}

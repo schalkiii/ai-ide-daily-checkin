@@ -47,11 +47,14 @@
 
 ```
 ai-ide-daily-checkin/
-├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy]
+├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy]，末尾汇总推送飞书
 ├── checkin_qoder.py        # Qoder CN：用量汇总 + 签到（DPAPI + AES-GCM）
 ├── checkin_trae.py         # Trae CN / SOLO：签到（iCubeAuthInfo 自定义加密）
 ├── checkin_workbuddy.py    # WorkBuddy：签到（$wbEncrypted AES-GCM）
 ├── checkin_kuku.py         # 库库AI：脱机领积分（freepoint，读 cookie 仓 BDUSS/STOKEN）
+├── feishu_notify.py        # 飞书群机器人推送（curl 主 + requests 兜底）
+├── config.json             # 本地配置：feishuWebhook（含私有 webhook，被 .gitignore 忽略）
+├── config.example.json     # 配置模板（复制为 config.json 后填入 webhook）
 ├── requirements.txt        # requests / cryptography / pycryptodome
 ├── auths.example.json      # 可选：多账号 / 免本地解密（复制为 auths.json）
 ├── setup.bat               # 建 venv + 装依赖
@@ -94,6 +97,33 @@ setup.bat
 ```
 
 或直接双击 `run-all.bat`。运行明细写入同目录 `checkin.log`。
+
+---
+
+## 飞书推送（可选）
+
+`checkin.py` 跑完四家后汇总发一条飞书群机器人消息（与 trae-daily-checkin 同一个机器人）：
+
+```text
+【AI IDE 每日签到】
+Qoder CN：成功（没有 CLAIMABLE 的活动，无需签到）
+Trae CN：成功（(API) 今日已签到，当前积分：100）
+WorkBuddy：成功（(API) 今日已签到）
+库库AI：成功（当前没有可领取的活动（freepoint 活动可能已下线））
+时间：2026-10-21 10:05:12
+汇总：4/4 家成功，聚合退出码 0
+```
+
+webhook 三级优先级：
+
+1. `--feishu <url>` 命令行参数
+2. 环境变量 `AICHECKIN_FEISHU_WEBHOOK`
+3. 同目录 `config.json` 的 `feishuWebhook` 字段（把 `config.example.json` 复制为 `config.json` 填入；`config.json` 含私有 webhook，已被 `.gitignore` 忽略，勿提交）
+
+- 推送通道：curl 主（Windows 自动加 `--ssl-no-revoke`，规避 schannel 证书吊销离线检查失败）+ requests 兜底；**推送失败仅告警，不影响签到退出码**。
+- 临时关闭：`python checkin.py all --no-push`。
+- 汇总退出码与推送结果也会写入 `checkin.log`（`pythonw` 丢弃 stdout，计划任务场景靠它排查）。
+- 单独跑某个子脚本（如 `python checkin_trae.py`）不推送，推送只挂在统一入口 `checkin.py`。
 
 ---
 

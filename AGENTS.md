@@ -15,6 +15,7 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 
 ## 技术栈与约定
 - 每家一个 `checkin_<name>.py`，解密路径与接口各异（详见 README 一览表）。
+- 飞书推送：统一入口 `checkin.py` 汇总各家状态，经 `feishu_notify.py` 发群机器人（curl 主 + requests 兜底）；webhook 优先级 `--feishu` > 环境变量 `AICHECKIN_FEISHU_WEBHOOK` > 同目录 `config.json`（gitignore，本地与 trae-daily-checkin 同 webhook）；推送失败不影响退出码。
 - 计划任务注册走 `install-schedule.ps1`：**必须纯 ASCII**（WinPS5.1 按 GBK 读无 BOM 的 UTF-8 脚本会崩）；
   密码用控制台 `Read-Host -AsSecureString` 采集（`PromptForCredential` 在纯 console 宿主里不弹窗）。
 - 库库脱机读**默认上下文** Cookie 仓 `%APPDATA%\baidugenflowpro\Network\Cookies` 优先；
