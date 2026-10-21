@@ -30,6 +30,11 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 - 库库旧 `freepoint`（daily_login/daily_chat）于 2026-10-15 已下线（homenew 返回空 activities），`checkin_kuku.py` 现对库库安全 no-op；新活动「金秋厚礼」走 `comps/view` 且每请求需 App 注入的 `window.jsToken`，脱机无法生成 → 库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取。
 - 库库 `errno=-6` = STOKEN 陈旧：正常打开库库再优雅退出让其落盘，或改用 CDP 项目领取。
 
+## 当前状态（2026-10-22）
+- **AICheckinDaily 计划任务仍损坏**：动作是裸 `pythonw.exe`（0x80070002 启动失败），下次 10-22 10:05 仍不会执行。免密改写已实测不可行（Set-ScheduledTask / schtasks /Change / COM / 注册表均需密码或被安全策略拦截），需用户二选一：重跑 `install-schedule.bat` 输一次密码（恢复「不管是否登录都运行」+ 绝对路径解释器），或改注册 `/IT` 交互任务（免密、仅登录时运行）。**用户确认前不要动任务。**
+- 今日（10-21）四家签到已手动补跑完成：Qoder 已签 / Trae 已签（100 分）/ WorkBuddy +100 / 库库本机未安装 baidugenflowpro（预期失败，由 CDP 姊妹项目负责）；飞书汇总推送经 curl 通道正常送达。
+- 本机无 `.venv`；系统 Python313 已装齐 requests/cryptography/pycryptodome，手动运行直接用系统 python 即可（上方「怎么跑」的 venv 路径是标准工作流）。
+
 ## 分工 / 安全红线
 - 与姊妹项目 `kuku-ai-daily-checkin`（CDP 模拟 UI）互补：本项目免开客户端；库库对话项依赖 CDP 或手动。
 - 只读登录态、不打印 token/cookie 明文、**绝不改 refresh token**（改了不写回会让客户端下次刷新被登出）。
