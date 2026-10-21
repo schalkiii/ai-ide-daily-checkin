@@ -29,8 +29,20 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
 # Windowless interpreter: local venv pythonw first, else system pythonw.
+# ALWAYS an absolute path: Task Scheduler resolves a bare command name against
+# the MACHINE path (the interactive user's PATH is NOT used), so a bare
+# "pythonw.exe" makes the action launch fail with 0x80070002 (file not found)
+# whenever no Python sits on the machine PATH. Registering a bare name here
+# produced exactly that silent daily failure - never do it again.
 $pyw = Join-Path $root '.venv\Scripts\pythonw.exe'
-if (-not (Test-Path $pyw)) { $pyw = 'pythonw.exe' }
+if (-not (Test-Path $pyw)) {
+  $sys = Get-Command 'pythonw.exe' -ErrorAction SilentlyContinue
+  if (-not $sys) {
+    Write-Error 'pythonw.exe not found. Run setup.bat first, or add Python to PATH.'
+    exit 1
+  }
+  $pyw = $sys.Source
+}
 
 $checkin = Join-Path $root 'checkin.py'
 $action  = New-ScheduledTaskAction -Execute $pyw -Argument ('"' + $checkin + '" all') -WorkingDirectory $root

@@ -166,6 +166,8 @@ schtasks /Create /F /SC DAILY /ST 10:05 /TN "AICheckinQoder" /IT ^
 - **Q5 WorkBuddy `keyId` 不匹配 / 版本更新** — `_AT_REST_SECRET` 是内嵌 at-rest 密钥，WorkBuddy 大版本升级后可能更换，需重新提取。
 - **Q6 accessToken/登录态过期** — Trae / WorkBuddy 会记录状态失败；打开对应客户端登录一次刷新登录态文件即可。
 - **Q7 库库 `homenew errno=-6`（未登录）** — 脱机用的 `STOKEN` 陈旧。库库的 genflowpro STOKEN 由客户端启动时经 native 引擎交换得到，落盘在**默认上下文** Cookie 仓；若客户端运行时读盘（DB 被独占）会回退缓存 `kuku_auth.json`；缓存也旧时，**正常打开一次库库再优雅退出**让其把最新 STOKEN 落盘即可（脚本已做“验证有效才写缓存”，陈旧 cookie 不会污染缓存）。
+- **Q8 计划任务 `LastResult` = 2147942402（0x80070002 找不到文件）、`checkin.log` 无新记录** — 任务动作里是**裸 `pythonw.exe`**：Task Scheduler 按**机器 PATH**（而非交互用户的 PATH）解析裸命令名，机器 PATH 无 Python 时动作启动即失败，签到根本不会执行。`install-schedule.ps1` 已修复为始终注册**绝对路径**解释器（`.venv` 优先，否则解析系统 `pythonw.exe` 的绝对路径），重新运行 `install-schedule.bat` 即可。
+  注意：对已存凭据的现有任务，`Set-ScheduledTask` / `schtasks /Change` 都要求重新输入 Windows 密码才能改写（凭据由系统 LSA 保管），**无法免密修复**；任务若已处于该状态，只能重跑 `install-schedule.bat` 输入密码刷新注册。改 Windows 登录密码后同样需要重跑刷新。
 
 ---
 

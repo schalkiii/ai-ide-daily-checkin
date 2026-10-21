@@ -23,6 +23,7 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 - 运行明细写 `checkin.log`；库库登录态**经 homenew 验证有效后**才写缓存 `kuku_auth.json`（防陈旧污染）。
 
 ## 关键事实（已实地验证）
+- 计划任务动作**必须注册绝对路径解释器**：Task Scheduler 按机器 PATH（非交互用户 PATH）解析裸命令名，裸 `pythonw.exe` 会以 0x80070002 启动失败、签到不执行；`install-schedule.ps1` 已保证（venv 优先，否则系统 pythonw 绝对路径）。改现有任务需重输密码（LSA 凭据不可免密改写）。
 - 四家均幂等：已签到重复跑不会重复发放。
 - 计划任务「不管是否登录都运行」**只有『保存了密码』(Password 登录类型) 时 DPAPI 才能非交互解密**；
   S4U / 服务账户 → `CryptUnprotectData failed` 全失败。改 Windows 密码后需重跑 `install-schedule.bat` 刷新凭据。
