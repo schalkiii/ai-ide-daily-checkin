@@ -30,9 +30,9 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 - 库库旧 `freepoint`（daily_login/daily_chat）于 2026-10-15 已下线（homenew 返回空 activities），`checkin_kuku.py` 现对库库安全 no-op；新活动「金秋厚礼」走 `comps/view` 且每请求需 App 注入的 `window.jsToken`，脱机无法生成 → 库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取。
 - 库库 `errno=-6` = STOKEN 陈旧：正常打开库库再优雅退出让其落盘，或改用 CDP 项目领取。
 
-## 当前状态（2026-10-22）
-- **AICheckinDaily 计划任务仍损坏**：动作是裸 `pythonw.exe`（0x80070002 启动失败），下次 10-22 10:05 仍不会执行。免密改写已实测不可行（Set-ScheduledTask / schtasks /Change / COM / 注册表均需密码或被安全策略拦截），需用户二选一：重跑 `install-schedule.bat` 输一次密码（恢复「不管是否登录都运行」+ 绝对路径解释器），或改注册 `/IT` 交互任务（免密、仅登录时运行）。**用户确认前不要动任务。**
-- 今日（10-21）四家签到已手动补跑完成：Qoder 已签 / Trae 已签（100 分）/ WorkBuddy +100 / 库库本机未安装 baidugenflowpro（预期失败，由 CDP 姊妹项目负责）；飞书汇总推送经 curl 通道正常送达。
+## 当前状态（2026-10-22 08:30）
+- **AICheckinDaily 已修复并验证**：用户已于 08:2x 重跑 `install-schedule.bat` 重新注册——动作为绝对路径 `C:\Users\Schal\AppData\Local\Programs\Python\Python313\pythonw.exe`，LogonType=Password 凭据已刷新。08:27:59 手动触发实测：DPAPI 非交互解密正常，Qoder 已签 / Trae CN 已签(100) / WorkBuddy 已签，飞书汇总推送送达；`LastResult=1` **仅因库库本机未安装**（baidugenflowpro 不在机内，预期失败，由 CDP 姊妹项目负责）——这是本机的稳态退出码，不是故障。
+- 今日（10-22）08:28 计划任务跑出的即为当日签到结果，无需再手动补跑。
 - 本机无 `.venv`；系统 Python313 已装齐 requests/cryptography/pycryptodome，手动运行直接用系统 python 即可（上方「怎么跑」的 venv 路径是标准工作流）。
 
 ## 分工 / 安全红线
