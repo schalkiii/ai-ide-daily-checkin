@@ -26,15 +26,20 @@ import os
 import struct
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
 from Crypto.Cipher import AES
 
+import credits_common as cc
+
 # ---- 配置 ----
 API_BASE = "https://copilot.tencent.com/v2/billing/meter"
 AUTH_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "CodeBuddyExtension" / "Data" / "Public" / "auth"
+# 积分权益包列表（签名与 UA 硬校验均逆向自客户端 out/main.js）
+CREDITS_API = "https://copilot.tencent.com/v2/billing/meter/get-user-resource"
+CREDITS_USER_AGENT = "CodeBuddyCN"  # 服务端校验 UA，缺失/不符返回 403 code=10085
 
 BASE_DIR = Path(__file__).parent
 LOG_FILE = BASE_DIR / "checkin.log"
@@ -173,6 +178,64 @@ def checkin_api(name: str, session: dict) -> bool:
     return False
 
 
+def fetch_credits(name: str, session: dict) -> dict:
+    """查询 WorkBuddy 积分余额与权益包过期时间（2026-10-22 实测可用）。
+
+    POST /v2/billing/meter/get-user-resource（调用签名逆向自客户端 out/main.js
+    的 getPersonalUsage）：分页列出积分账户（权益包），每包含 CapacityRemain
+    余额与 CycleEndTime 过期时间（30 天周期）。Status=0 为活跃。
+    注意：必须带 User-Agent: CodeBuddyCN，否则 403。
+    """
+    auth = session["auth"]
+    expires_at = auth.get("expiresAt") or 0
+    if expires_at / 1000 < time.time():
+        return {"error": "accessToken 已过期，需启动 WorkBuddy 刷新登录态"}
+
+    now = datetime.now()
+    headers = {
+        "Authorization": f"Bearer {auth['accessToken']}",
+        "X-User-Id": session["account"]["uid"],
+        "User-Agent": CREDITS_USER_AGENT,
+        "Content-Type": "application/json",
+    }
+    body = {
+        "PageNumber": 1, "PageSize": 100,
+        "ProductCode": "p_tcaca",
+        "Status": [0, 3],
+        "PackageEndTimeRangeBegin": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "PackageEndTimeRangeEnd": (now + timedelta(days=101 * 365)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    r = requests.post(CREDITS_API, headers=headers, json=body, timeout=30)
+    doc = r.json()
+    if doc.get("code") != 0:
+        return {"error": f"HTTP {r.status_code} code={doc.get('code')} {doc.get('msg')}"}
+    inner = ((doc.get("data") or {}).get("Response") or {}).get("Data") or {}
+    accounts = inner.get("Accounts") or []
+
+    packs = []
+    for acct in accounts:
+        if acct.get("Status") != 0:
+            continue  # 仅活跃包
+        remain = acct.get("CapacityRemain") or 0
+        expire = cc.parse_ts(acct.get("CycleEndTime"))
+        if remain <= 0 or expire is None:
+            continue
+        packs.append({"desc": acct.get("PackageName") or "", "credits": remain,
+                      "expire_dt": expire})
+    packs.sort(key=lambda p: p["expire_dt"])
+
+    result = {
+        "remaining": sum(p["credits"] for p in packs),
+        "packs": [{"desc": p["desc"], "credits": p["credits"],
+                   "expire": cc.fmt_dt(p["expire_dt"])} for p in packs[:10]],
+        "expiring_7d": cc.sum_expiring(packs, 7),
+    }
+    if packs:
+        result["nearest"] = {"credits": packs[0]["credits"],
+                             "expire": cc.fmt_dt(packs[0]["expire_dt"])}
+    return result
+
+
 def main() -> int:
     log("=" * 50)
     log("[WorkBuddy] 开始每日积分领取")
@@ -182,7 +245,15 @@ def main() -> int:
         log("ERROR: 没有可用登录态，请先打开 WorkBuddy 并登录")
         return 1
     results = [checkin_api(name, session) for name, session in accounts]
-    return 0 if all(results) else 1
+    rc = 0 if all(results) else 1
+    # 积分余额与过期（查询失败不影响签到退出码）
+    for name, session in accounts:
+        try:
+            summary = fetch_credits(name, session)
+        except Exception as e:
+            summary = {"error": str(e)}
+        log("[CREDITS] " + json.dumps(summary, ensure_ascii=False))
+    return rc
 
 
 if __name__ == "__main__":

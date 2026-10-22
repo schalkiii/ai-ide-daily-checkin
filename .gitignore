@@ -6,6 +6,9 @@ logs/
 # 本地配置（含飞书 webhook，参考 config.example.json）
 config.json
 
+# 积分发放单账本（Qoder逐笔 expiresAt 累积，本地生成）
+credits_ledger.json
+
 # Python
 __pycache__/
 *.py[cod]

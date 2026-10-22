@@ -47,11 +47,13 @@
 
 ```
 ai-ide-daily-checkin/
-├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy]，末尾汇总推送飞书
-├── checkin_qoder.py        # Qoder CN：用量汇总 + 签到（DPAPI + AES-GCM）
-├── checkin_trae.py         # Trae CN / SOLO：签到（iCubeAuthInfo 自定义加密）
-├── checkin_workbuddy.py    # WorkBuddy：签到（$wbEncrypted AES-GCM）
+├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy]，末尾汇总推送飞书（含积分小节）
+├── checkin_qoder.py        # Qoder CN：用量汇总 + 签到（DPAPI + AES-GCM）+ 积分余额/过期
+├── checkin_trae.py         # Trae CN / SOLO：签到（iCubeAuthInfo 自定义加密）+ 积分余额/过期
+├── checkin_workbuddy.py    # WorkBuddy：签到（$wbEncrypted AES-GCM）+ 积分余额/过期
 ├── checkin_kuku.py         # 库库AI：脱机领积分（freepoint，读 cookie 仓 BDUSS/STOKEN）
+├── credits_common.py       # 积分汇总共享工具（时间解析/格式化、临期合计）
+├── credits_ledger.json     # Qoder 积分发放单账本（本地累积，被 .gitignore 忽略）
 ├── feishu_notify.py        # 飞书群机器人推送（curl 主 + requests 兜底）
 ├── config.json             # 本地配置：feishuWebhook（含私有 webhook，被 .gitignore 忽略）
 ├── config.example.json     # 配置模板（复制为 config.json 后填入 webhook）
@@ -124,6 +126,29 @@ webhook 三级优先级：
 - 临时关闭：`python checkin.py all --no-push`。
 - 汇总退出码与推送结果也会写入 `checkin.log`（`pythonw` 丢弃 stdout，计划任务场景靠它排查）。
 - 单独跑某个子脚本（如 `python checkin_trae.py`）不推送，推送只挂在统一入口 `checkin.py`。
+
+---
+
+## 积分余额与过期（每日推送小节）
+
+每次汇总推送在签到状态之后附带「积分与过期」小节：各家**剩余积分**、**最近一笔过期时间与数量**、**7 天内到期合计**。示例：
+
+```text
+── 积分与过期 ──
+Qoder CN：余额 1200｜最近到期 11-21 02:05（100）｜7天内到期 ~0｜历史约1100积分按日滚动到期（首签估算 10-11，领取后30天有效，未记录的每日约100）
+Trae CN：余额 3433.9｜最近到期 10-23 02:31（150）｜7天内到期 1050
+WorkBuddy：余额 6066｜最近到期 10-22 23:37（34）｜7天内到期 6066
+```
+
+各家数据来源（均为官方同源接口，2026-10-22 实测）：
+
+| 产品 | 余额接口 | 过期时间 | 说明 |
+|---|---|---|---|
+| Qoder CN | `/api/v2/quota/usage` 的 `addOnQuota.remaining` | claim 重放 | campaigns 无历史翻页；对已领取 campaign 重放 claim（幂等）拿回发放单的 `expiresAt`，逐笔记入本地 `credits_ledger.json`；账本之前的历史按「每日领取、30 天有效」规则**估算**（消息中以 `~` 标注） |
+| Trae CN | `/trae/api/v2/pay/ide_user_ent_usage` 的 `usage_summary`（total-consumed） | 同接口权益包列表 | 每笔签到奖励独立成包，`expire_time` = 领取时间 + 30 天，逐笔精确 |
+| WorkBuddy | `/v2/billing/meter/get-user-resource` 活跃包 `CapacityRemain` 合计 | 同接口每包 `CycleEndTime` | 必须带 `User-Agent: CodeBuddyCN`（服务端硬校验，否则 403）；调用签名逆向自客户端 `out/main.js` |
+
+查询失败不影响签到退出码，小节中该家显示「查询失败（原因）」。库库AI 暂无积分接口，不占小节。
 
 ---
 

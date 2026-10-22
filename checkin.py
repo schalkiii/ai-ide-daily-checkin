@@ -15,10 +15,13 @@
 计划任务里用一条 `pythonw checkin.py all` 即可覆盖四家。
 
 飞书推送（feishu_notify.py）：跑完汇总各家状态发一条群机器人消息。
+    推送内容含「积分与过期」小节：各家余额、最近到期时间与数量、7 天内到期合计
+    （数据由各 checkin_<name>.py 的 fetch_credits() 以 [CREDITS] 行输出）。
     webhook 优先级：--feishu <url> > 环境变量 AICHECKIN_FEISHU_WEBHOOK
                     > 同目录 config.json 的 feishuWebhook 字段
 推送失败仅告警，不影响签到退出码。
 """
+import json
 import os
 import re
 import subprocess
@@ -26,6 +29,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import credits_common as cc
 import feishu_notify
 
 BASE = Path(__file__).parent
@@ -48,6 +52,8 @@ DISPLAY_NAMES = {
 # 从子脚本输出中挑“关键行”做推送详情（命中任一关键词的行，取最后一条）
 DETAIL_KEYWORDS = ("签到", "已签", "领取", "积分", "ERROR", "失败", "过期",
                    "无效", "没有", "超时", "跳过", "活动")
+# 子脚本输出的积分汇总行：[CREDITS] {json}
+CREDITS_LINE = re.compile(r"\[CREDITS\]\s*(\{.*\})\s*$")
 LOG_PREFIX = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -107,13 +113,48 @@ def detail_line(output: str) -> str:
     return (hits[-1] if hits else (lines[-1] if lines else "无输出"))[:100]
 
 
-def build_message(results: list[tuple[str, int, str]], rc_total: int) -> str:
-    """组装飞书文本：每家一行状态+详情，末尾时间与汇总。"""
+def extract_credits(output: str) -> dict | None:
+    """从子脚本输出中取最后一条 [CREDITS] JSON 行（无则返回 None）。"""
+    summary = None
+    for line in output.splitlines():
+        m = CREDITS_LINE.search(LOG_PREFIX.sub("", line))
+        if m:
+            try:
+                summary = json.loads(m.group(1))
+            except ValueError:
+                pass  # 容忍单行截断，继续找更早的有效行
+    return summary
+
+
+def credits_line(name: str, summary: dict) -> str:
+    """渲染一家的积分小结：余额｜最近到期（数量）｜7天内到期（+备注/错误）。"""
+    if "error" in summary:
+        return f"{DISPLAY_NAMES[name]}：查询失败（{str(summary['error'])[:40]}）"
+    parts = [f"余额 {cc.fmt_num(summary.get('remaining'))}"]
+    nearest = summary.get("nearest")
+    if nearest:
+        parts.append(f"最近到期 {nearest['expire']}（{cc.fmt_num(nearest['credits'])}）")
+    expiring = summary.get("expiring_7d")
+    if expiring:
+        est = "~" if summary.get("expiring_7d_estimated") else ""
+        parts.append(f"7天内到期 {est}{cc.fmt_num(expiring)}")
+    if summary.get("note"):
+        parts.append(summary["note"])
+    return f"{DISPLAY_NAMES[name]}：" + "｜".join(parts)
+
+
+def build_message(results: list[tuple[str, int, str]], rc_total: int,
+                  credits: dict | None = None) -> str:
+    """组装飞书文本：每家一行签到状态+详情，随后积分小节，末尾时间与汇总。"""
     ok_count = sum(1 for _, rc, _ in results if rc == 0)
     body = ["【AI IDE 每日签到】"]
     for name, rc, output in results:
         status = "成功" if rc == 0 else "失败"
         body.append(f"{DISPLAY_NAMES[name]}：{status}（{detail_line(output)}）")
+    credit_entries = [(n, s) for n, s in (credits or {}).items() if s]
+    if credit_entries:
+        body.append("── 积分与过期 ──")
+        body.extend(credits_line(name, summary) for name, summary in credit_entries)
     body.append(f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}")
     body.append(f"汇总：{ok_count}/{len(results)} 家成功，聚合退出码 {rc_total}")
     return "\n".join(body)
@@ -136,12 +177,16 @@ def main(argv: list[str]) -> int:
         order, passthrough = ["qoder", "trae", "workbuddy", "kuku"], rest
 
     results: list[tuple[str, int, str]] = []
+    credits: dict[str, dict] = {}
     rc = 0
     for name in order:
         # --dry-run 仅 Qoder / 库库 支持；对其余家过滤掉，避免 argparse 报错
         args = [a for a in passthrough if not (name not in DRY_RUN_CAPABLE and a == "--dry-run")]
         child_rc, output = run(name, args)
         results.append((name, child_rc, output))
+        summary = extract_credits(output)
+        if summary:
+            credits[name] = summary
         rc |= child_rc
 
     log(f"全部完成，聚合退出码 = {rc}")
@@ -150,7 +195,7 @@ def main(argv: list[str]) -> int:
     if not no_push:
         webhook = feishu_notify.resolve_webhook(webhook_arg)
         if webhook:
-            sent = feishu_notify.push(webhook, build_message(results, rc))
+            sent = feishu_notify.push(webhook, build_message(results, rc, credits))
             log("飞书推送：" + ("已发送" if sent else "失败（详见上方告警）"))
         else:
             log("未配置飞书 webhook（config.json feishuWebhook / AICHECKIN_FEISHU_WEBHOOK / --feishu），跳过推送")

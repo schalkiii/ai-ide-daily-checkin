@@ -38,9 +38,13 @@ import requests
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+import credits_common as cc
+
 # ---- 配置 ----
 AUTH_KEY = "iCubeAuthInfo://icube.cloudide"
 API_BASE = "https://api.trae.cn/trae/api/v2/ug/checkin_credits"
+# 积分权益账本（usage_summary + 每笔权益包的额度与过期时间）
+CREDITS_API = "https://api.trae.cn/trae/api/v2/pay/ide_user_ent_usage"
 REQ_SOURCE = 1  # 1=Trae CN IDE；2=SOLO/企业版（同一账号积分互通，用 1 即可）
 
 # iCube 登录态解密常量（与 Trae 客户端加密格式对应）
@@ -221,6 +225,50 @@ def checkin_api(name: str, auth: dict, device_id: str) -> bool:
     return False
 
 
+def fetch_credits(name: str, auth: dict, device_id: str) -> dict:
+    """查询 Trae CN 积分余额与权益包过期时间（2026-10-22 实测可用）。
+
+    POST /trae/api/v2/pay/ide_user_ent_usage 返回：
+      usage_summary：总额度/已用（remaining = total - consumed）
+      user_entitlement_pack_list：每笔权益包的 credits_limit 与 start/end 时间。
+    每笔签到奖励独立成包，expire_time = 领取时间 + 30 天；免费配额等非积分包跳过。
+    """
+    token = auth["token"]
+    region = (auth.get("userRegion") or {}).get("region")
+    doc = api(CREDITS_API, token, region, device_id)
+
+    summary = doc.get("usage_summary") or {}
+    total, consumed = summary.get("total_amount"), summary.get("consumed_amount")
+    remaining = (total - consumed) if (total is not None and consumed is not None) else None
+
+    packs = []
+    for pack in doc.get("user_entitlement_pack_list") or []:
+        base = pack.get("entitlement_base_info") or {}
+        extra = base.get("product_extra") or {}
+        limit = None
+        for key in ("package_extra", "subscription_extra"):
+            quota = (extra.get(key) or {}).get("quota") or {}
+            if "credits_limit" in quota:
+                limit = quota["credits_limit"]
+        expire = cc.parse_ts(pack.get("expire_time") or base.get("end_time"))
+        if not limit or expire is None:
+            continue  # 免费配额等无积分额度的包
+        packs.append({"desc": pack.get("display_desc") or "", "credits": limit,
+                      "expire_dt": expire})
+    packs.sort(key=lambda p: p["expire_dt"])
+
+    result = {
+        "remaining": remaining,
+        "packs": [{"desc": p["desc"], "credits": p["credits"],
+                   "expire": cc.fmt_dt(p["expire_dt"])} for p in packs[:10]],
+        "expiring_7d": cc.sum_expiring(packs, 7),
+    }
+    if packs:
+        result["nearest"] = {"credits": packs[0]["credits"],
+                             "expire": cc.fmt_dt(packs[0]["expire_dt"])}
+    return result
+
+
 def main() -> int:
     accounts = load_accounts()
     if not accounts:
@@ -228,7 +276,15 @@ def main() -> int:
         return 1
     device_id = load_device_id()
     results = [checkin_api(name, auth, device_id) for name, auth in accounts]
-    return 0 if all(results) else 1
+    rc = 0 if all(results) else 1
+    # 积分余额与过期（查询失败不影响签到退出码）
+    for name, auth in accounts:
+        try:
+            summary = fetch_credits(name, auth, device_id)
+        except Exception as e:
+            summary = {"error": str(e)}
+        log("[CREDITS] " + json.dumps(summary, ensure_ascii=False))
+    return rc
 
 
 if __name__ == "__main__":
