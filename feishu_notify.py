@@ -32,11 +32,18 @@ def resolve_webhook(cli_value: str | None = None) -> str:
         return ""
 
 
-def push(webhook: str, text: str) -> bool:
-    """推送文本消息到飞书群机器人，返回是否送达。任何异常仅告警，不抛出。"""
+def push(webhook: str, text: str | None = None, card: dict | None = None) -> bool:
+    """推送消息到飞书群机器人，返回是否送达。任何异常仅告警，不抛出。
+
+    card 非空时发交互卡片（msg_type=interactive），否则发纯文本。
+    """
     if not webhook:
         return False
-    body = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False)
+    if card is not None:
+        payload = {"msg_type": "interactive", "card": card}
+    else:
+        payload = {"msg_type": "text", "content": {"text": text or ""}}
+    body = json.dumps(payload, ensure_ascii=False)
 
     # 1) curl 主通道：经 trae-daily-checkin 实战验证可用（Windows curl 不走
     #    环境代理、直连可达；--ssl-no-revoke 规避 schannel 离线吊销检查失败）
@@ -57,8 +64,7 @@ def push(webhook: str, text: str) -> bool:
     # 2) requests 兜底（走 HTTP(S)_PROXY 环境变量）
     try:
         import requests
-        resp = requests.post(
-            webhook, json={"msg_type": "text", "content": {"text": text}}, timeout=10)
+        resp = requests.post(webhook, json=payload, timeout=10)
         if resp.status_code == 200 and resp.json().get("code") == 0:
             print("[INFO] 飞书通知已发送 (requests)")
             return True

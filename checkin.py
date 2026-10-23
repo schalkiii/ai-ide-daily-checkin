@@ -15,7 +15,7 @@
 最终退出码 = 所有已尝试脚本退出码的按位或（0 表示全部成功）。
 计划任务里用一条 `pythonw checkin.py all` 即可覆盖五家。
 
-飞书推送（feishu_notify.py）：跑完汇总各家状态发一条群机器人消息。
+飞书推送（feishu_notify.py）：跑完汇总各家状态发一条交互卡片（状态色 + 每家一行详情）。
     webhook 优先级：--feishu <url> > 环境变量 AICHECKIN_FEISHU_WEBHOOK
                     > 同目录 config.json 的 feishuWebhook 字段
 推送失败仅告警，不影响签到退出码。
@@ -110,16 +110,51 @@ def detail_line(output: str) -> str:
     return (hits[-1] if hits else (lines[-1] if lines else "无输出"))[:100]
 
 
-def build_message(results: list[tuple[str, int, str]], rc_total: int) -> str:
-    """组装飞书文本：每家一行状态+详情，末尾时间与汇总。"""
+def escape_lark(text: str) -> str:
+    """lark_md 会把 < > 当标签解析；详情来自日志，换成全角避免误伤。"""
+    return text.replace("<", "＜").replace(">", "＞")
+
+
+def build_card(results: list[tuple[str, int, str]], rc_total: int) -> dict:
+    """组装飞书交互卡片：每家一行状态+详情，底部汇总。"""
     ok_count = sum(1 for _, rc, _ in results if rc == 0)
-    body = ["【AI IDE 每日签到】"]
+    total = len(results)
+    if ok_count == total:
+        template, title = "green", "AI IDE 每日签到 · 全部成功"
+    elif ok_count == 0:
+        template, title = "red", "AI IDE 每日签到 · 全部失败"
+    else:
+        template, title = "orange", f"AI IDE 每日签到 · {ok_count}/{total} 家成功"
+
+    elements = []
     for name, rc, output in results:
-        status = "成功" if rc == 0 else "失败"
-        body.append(f"{DISPLAY_NAMES[name]}：{status}（{detail_line(output)}）")
-    body.append(f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}")
-    body.append(f"汇总：{ok_count}/{len(results)} 家成功，聚合退出码 {rc_total}")
-    return "\n".join(body)
+        icon = "✅" if rc == 0 else "❌"
+        detail = escape_lark(detail_line(output))
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"{icon} **{DISPLAY_NAMES[name]}**　<font color='grey'>{detail}</font>",
+            },
+        })
+    elements.append({"tag": "hr"})
+    elements.append({
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": f"**{ok_count}/{total}** 家成功　·　聚合退出码 **{rc_total}**",
+        },
+    })
+    elements.append({
+        "tag": "note",
+        "elements": [{"tag": "plain_text", "content": f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}"}],
+    })
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"template": template,
+                   "title": {"tag": "plain_text", "content": title}},
+        "elements": elements,
+    }
 
 
 def main(argv: list[str]) -> int:
@@ -153,7 +188,7 @@ def main(argv: list[str]) -> int:
     if not no_push:
         webhook = feishu_notify.resolve_webhook(webhook_arg)
         if webhook:
-            sent = feishu_notify.push(webhook, build_message(results, rc))
+            sent = feishu_notify.push(webhook, card=build_card(results, rc))
             log("飞书推送：" + ("已发送" if sent else "失败（详见上方告警）"))
         else:
             log("未配置飞书 webhook（config.json feishuWebhook / AICHECKIN_FEISHU_WEBHOOK / --feishu），跳过推送")
