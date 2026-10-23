@@ -1,4 +1,4 @@
-# AI IDE 每日签到 / 积分自动领取（Qoder CN · Trae CN · WorkBuddy · 库库AI）
+# AI IDE 每日签到 / 积分自动领取（Qoder CN · Trae CN · WorkBuddy · 库库AI · 豆包）
 
 一个**零 GUI、纯接口**的每日签到项目：只读取各客户端在本机的登录态文件，解出 token，
 直接调用官方同源签到接口领取每日积分。无需打开客户端、无需模拟点击，适合挂计划任务。
@@ -20,13 +20,13 @@
 | 是否要开客户端 | 否（只要登录态文件在，token 未过期即可） | 是（客户端必须在运行） |
 | 稳定性 | 高（接口契约，幂等） | 中（受 UI/DOM、iframe 残留、动画影响） |
 | 依赖 | Python 3 + requests/cryptography/pycryptodome | Node.js（零第三方依赖） |
-| 覆盖面 | 一家一套解密，覆盖四家 | 单家单客户端 |
+| 覆盖面 | 一家一套解密，覆盖五家 | 单家单客户端 |
 
 两种方案互补：接口方案更省心，UI 方案在 token 解密路径变更时仍可兜底。
 
 ---
 
-## 四家登录态与接口一览
+## 五家登录态与接口一览
 
 | 产品 | 凭证路径 | 加密方式 | 签到接口 | 关键 Header |
 |------|----------|----------|----------|-------------|
@@ -34,12 +34,15 @@
 | **Trae CN / SOLO** | `%APPDATA%\Trae CN\User\globalStorage\storage.json` 的 `iCubeAuthInfo://icube.cloudide` | 自定义：SHA-512 派生 + AES-CBC + 去 64B HMAC | `POST .../checkin_credits/status`；`POST .../checkin_credits/claim` | `Authorization: Cloud-IDE-JWT <token>` + `x-device-id` + `X-User-Region` |
 | **WorkBuddy** | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\*.info` | 5.6.0 前明文；5.6.0 起 `$wbEncrypted`（AES-256-GCM，at-rest 密钥派生） | `POST /v2/billing/meter/checkin-status`；`POST .../daily-checkin` | `Authorization: Bearer <accessToken>` + `X-User-Id` + `X-Domain` |
 | **库库AI (GenFlowPro)** | `%APPDATA%\baidugenflowpro\Network\Cookies`（默认上下文仓） | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-GCM 解 BDUSS/STOKEN | `GET /api/genflowpro/freepoint/homenew`；`POST .../taskComplete`（置对话任务为可领）；`POST .../rewardClaim` | 仅 `Cookie: BDUSS=..; STOKEN=..; gfprotpl=genflowpro`（**无 Authorization/签名**） |
+| **豆包 PC (Doubao)** | `%LOCALAPPDATA%\Doubao\User Data\` 的 `Local State` + `Default\Network\Cookies` | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-256-GCM 解 v10 cookie（剥 SHA256(host_key) 域绑定） | `POST /alice/ug/campaign/landing/get`；`POST .../v3/detail/`；`POST .../landing/checkin` | 仅 `Cookie: sessionid=..; sid_tt=..`（**无 Authorization**）；公共 query 从客户端日志解析 |
 
-四家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`），重复运行不会重复发放，乱点无害。
+五家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`）、豆包 detail 显示 `checked_in_today:true` 时直接跳过，重复运行不会重复发放。
 
 > ⚠️ **2026-10-15 活动改版**：库库旧 `freepoint`（`daily_login`/`daily_chat` 各 +50）已**下线**——`homenew` 现返回空 `activities`，本脱机 provider 对库库当前不再产出（`checkin_kuku.py` 安全 no-op）。新活动「金秋厚礼」走 `kuku.baidu.com/comps/view` 且每个请求都带 App 注入的 `window.jsToken`，**脱机无法生成该令牌**，故库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取（连签送 SVIP + 对话积分+10）。
 
 （以下为改版前 freepoint 脱机方案的**历史说明**，接口现均已下线）库库旧 freepoint 的 `daily_login`/`daily_chat` 曾可纯脱机领满 100：`daily_chat` 先调 `POST .../freepoint/taskComplete`（`task_type=CHAT`）置为可领再 `rewardClaim`（实测服务端曾接受该信号、不校验是否真对话过）；`invite_*` 需真实邀请。
+
+> ⚠️ **2026-10-22 豆包签到服务端异常（实测）**：`/landing/checkin` 对本人账号返回 `710010702 系统错误`。已用 CDP 在**官方 PC 客户端弹窗**点「立即签到」复现，请求 URL/body/Header 与本脚本完全一致，因此判定为服务端问题，而非脱机实现或参数/签名问题（`landing/get`、`v3/detail` 均正常返回 `checked_in_today:false`）。`checkin_doubao.py` 对已签/成功/失败均如实上报，服务端恢复后无需改代码。豆包每日签到为 **+200 额度**（活动 group `pc_incentive_task_mvp_v3`）。
 
 ---
 
@@ -47,22 +50,24 @@
 
 ```
 ai-ide-daily-checkin/
-├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy]，末尾汇总推送飞书
+├── checkin.py              # 统一入口：python checkin.py [all|qoder|trae|workbuddy|kuku|doubao]，末尾汇总推送飞书
 ├── checkin_qoder.py        # Qoder CN：用量汇总 + 签到（DPAPI + AES-GCM）
 ├── checkin_trae.py         # Trae CN / SOLO：签到（iCubeAuthInfo 自定义加密）
 ├── checkin_workbuddy.py    # WorkBuddy：签到（$wbEncrypted AES-GCM）
 ├── checkin_kuku.py         # 库库AI：脱机领积分（freepoint，读 cookie 仓 BDUSS/STOKEN）
+├── checkin_doubao.py       # 豆包 PC：签到（Chromium v10 cookie + DPAPI 域绑定解密）
 ├── feishu_notify.py        # 飞书群机器人推送（curl 主 + requests 兜底）
 ├── config.json             # 本地配置：feishuWebhook（含私有 webhook，被 .gitignore 忽略）
 ├── config.example.json     # 配置模板（复制为 config.json 后填入 webhook）
 ├── requirements.txt        # requests / cryptography / pycryptodome
 ├── auths.example.json      # 可选：多账号 / 免本地解密（复制为 auths.json）
 ├── setup.bat               # 建 venv + 装依赖
-├── run-all.bat             # 手动跑四家（前台，带 pause）
+├── run-all.bat             # 手动跑五家（前台，带 pause）
 ├── install-schedule.bat    # 注册每日计划任务（默认 10:05；调用下方 ps1）
 ├── install-schedule.ps1    # 计划任务实现：『不管是否登录都运行』+ StartWhenAvailable
 ├── uninstall-schedule.bat  # 删除计划任务
 ├── kuku_auth.json          # 库库登录态缓存（经验证有效后写入，被 gitignore）
+├── doubao_auth.json        # 豆包登录态/公共参数缓存（Cookie 库被客户端独占时兜底，被 gitignore）
 ├── checkin.log             # 运行日志（自动生成，已被 .gitignore 忽略）
 └── README.md
 ```
@@ -71,7 +76,7 @@ ai-ide-daily-checkin/
 
 ## 快速开始
 
-前置：三个客户端中你想签到的那几家，**已经在本机登录过**（登录态文件存在、token 未过期）。
+前置：五个客户端中你想签到的那几家，**已经在本机登录过**（登录态文件存在、token 未过期）。
 Python 3.9+（开发验证于 3.13）。
 
 ```bat
@@ -80,8 +85,9 @@ setup.bat
 
 :: 2) 先干跑，确认能解密 + 拉到活动列表（不会真正领取）
 .venv\Scripts\python.exe checkin.py qoder claim --dry-run
+.venv\Scripts\python.exe checkin.py doubao --dry-run
 
-:: 3) 正式领取四家
+:: 3) 正式领取五家
 .venv\Scripts\python.exe checkin.py all
 ```
 
@@ -94,7 +100,10 @@ setup.bat
 .venv\Scripts\python.exe checkin_trae.py
 .venv\Scripts\python.exe checkin_workbuddy.py
 .venv\Scripts\python.exe checkin_kuku.py --dry-run  :: 库库：只列可领任务，不领取
+.venv\Scripts\python.exe checkin.py doubao --dry-run :: 豆包：只查签到状态
 ```
+
+> 豆包运行时 Cookie 库会被独占，首次请**关闭豆包**运行一次 `checkin.py doubao`（或用 `--dry-run`）建立 `doubao_auth.json` 缓存；之后豆包开着也能用缓存并做接口校验。
 
 或直接双击 `run-all.bat`。运行明细写入同目录 `checkin.log`。
 
@@ -102,7 +111,7 @@ setup.bat
 
 ## 飞书推送（可选）
 
-`checkin.py` 跑完四家后汇总发一条飞书群机器人消息（与 trae-daily-checkin 同一个机器人）：
+`checkin.py` 跑完五家后汇总发一条飞书群机器人消息（与 trae-daily-checkin 同一个机器人）：
 
 ```text
 【AI IDE 每日签到】
@@ -110,8 +119,9 @@ Qoder CN：成功（没有 CLAIMABLE 的活动，无需签到）
 Trae CN：成功（(API) 今日已签到，当前积分：100）
 WorkBuddy：成功（(API) 今日已签到）
 库库AI：成功（当前没有可领取的活动（freepoint 活动可能已下线））
+豆包：成功（签到成功，+200 额度（连签 2 天，累计 2 天））
 时间：2026-10-21 10:05:12
-汇总：4/4 家成功，聚合退出码 0
+汇总：5/5 家成功，聚合退出码 0
 ```
 
 webhook 三级优先级：
@@ -138,9 +148,9 @@ install-schedule.bat
 - 用 `pythonw.exe`（venv 优先）无窗口后台执行 `checkin.py all`。
 - **默认改为「不管用户是否登录都要运行」**（`install-schedule.bat` → `install-schedule.ps1` 用 `Register-ScheduledTask -User .. -Password ..`）：
   运行脚本时会在**控制台内**提示你输入 Windows 登录密码（隐藏回显，不是 GUI 弹窗；旧版用 `PromptForCredential` 在无 GUI 宿主下会静默不弹窗，已改）。
-  Task Scheduler 会用保存的凭据做一次 Batch 登录并加载用户配置文件，**DPAPI 仍能解密**，各家照常工作（已实测：无人值守批处理登录下四家全跑通、`lastResult=0`）；
+  Task Scheduler 会用保存的凭据做一次 Batch 登录并加载用户配置文件，**DPAPI 仍能解密**，各家照常工作（已实测：无人值守批处理登录下各家全跑通、`lastResult=0`）；
   另加 `-StartWhenAvailable`，错过时间点（关机/睡眠）后开机尽快补跑。
-- ⚠️ **DPAPI 冲突（关键）**：四家都靠 `CryptUnprotectData`（用户主密钥）。「不管是否登录都要运行」**只有『保存了密码』(Password 登录类型) 时才工作**；
+- ⚠️ **DPAPI 冲突（关键）**：五家都靠 `CryptUnprotectData`（用户主密钥，豆包还多一步 Chromium os_crypt 解密）。「不管是否登录都要运行」**只有『保存了密码』(Password 登录类型) 时才工作**；
   若配成「不保存密码 / S4U / 服务账户」，无明文凭据 → `CryptUnprotectData failed` → 全部失败。
   **改 Windows 登录密码后，需重新运行 `install-schedule.bat` 刷新保存的凭据**（密码由系统 LSA 保管，不写入仓库）。
 - 不想保存密码就退回旧的**仅登录时运行**（`/IT`，用户没登录到桌面则不触发）：
@@ -168,6 +178,9 @@ schtasks /Create /F /SC DAILY /ST 10:05 /TN "AICheckinQoder" /IT ^
 - **Q7 库库 `homenew errno=-6`（未登录）** — 脱机用的 `STOKEN` 陈旧。库库的 genflowpro STOKEN 由客户端启动时经 native 引擎交换得到，落盘在**默认上下文** Cookie 仓；若客户端运行时读盘（DB 被独占）会回退缓存 `kuku_auth.json`；缓存也旧时，**正常打开一次库库再优雅退出**让其把最新 STOKEN 落盘即可（脚本已做“验证有效才写缓存”，陈旧 cookie 不会污染缓存）。
 - **Q8 计划任务 `LastResult` = 2147942402（0x80070002 找不到文件）、`checkin.log` 无新记录** — 任务动作里是**裸 `pythonw.exe`**：Task Scheduler 按**机器 PATH**（而非交互用户的 PATH）解析裸命令名，机器 PATH 无 Python 时动作启动即失败，签到根本不会执行。`install-schedule.ps1` 已修复为始终注册**绝对路径**解释器（`.venv` 优先，否则解析系统 `pythonw.exe` 的绝对路径），重新运行 `install-schedule.bat` 即可。
   注意：对已存凭据的现有任务，`Set-ScheduledTask` / `schtasks /Change` 都要求重新输入 Windows 密码才能改写（凭据由系统 LSA 保管），**无法免密修复**；任务若已处于该状态，只能重跑 `install-schedule.bat` 输入密码刷新注册。改 Windows 登录密码后同样需要重跑刷新。
+- **Q9 豆包「Cookie 库被豆包独占 / 未读取到任何豆包登录态」** — 豆包运行时对 `Default\Network\Cookies` 持有独占句柄，Windows 下无法复制或只读打开。脚本会回退 `doubao_auth.json` 缓存：**首次请关闭豆包运行一次**（`checkin.py doubao` 或 `--dry-run`）建立缓存。之后豆包开着也能用缓存并通过接口校验；若缓存也失效（`710012001 登录已过期`），打开豆包刷新登录态后关闭再跑一次即可。
+- **Q10 豆包签到 `710010702 系统错误`** — **服务端问题**，非本脚本参数/签名问题：2026-10-22 已用 CDP 在官方 PC 客户端弹窗点「立即签到」复现，请求报文完全一致；同时 `landing/get`、`v3/detail` 正常。脚本会如实报失败并返回 1，服务端恢复后自动成功，无需改代码。
+- **Q11 豆包公共 query 参数（device_id/web_id/fp）从哪来** — 优先从 `%LOCALAPPDATA%\Doubao\User Data\sdk_storage\log\saman_*.log` 最近的 PC 请求 URL 解析（只读日志），并缓存到 `doubao_auth.json`；解析不到时退回缓存/最小集。实测最小集即可正常查询状态。
 
 ---
 
