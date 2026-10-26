@@ -14,15 +14,15 @@
 最终退出码 = 所有已尝试脚本退出码的按位或（0 表示全部成功）。
 计划任务里用一条 `pythonw checkin.py all` 即可覆盖四家。
 
-飞书推送（feishu_notify.py）：跑完汇总各家状态发一条群机器人消息。
-    推送内容含「积分与过期」小节：各家余额、最近到期时间与数量、7 天内到期合计
-    （数据由各 checkin_<name>.py 的 fetch_credits() 以 [CREDITS] 行输出）。
+飞书推送（feishu_notify.py）：跑完汇总各家状态发一条群机器人交互卡片
+    （卡片发送失败自动回退纯文本）。内容含「积分与过期」小节：各家余额、
+    最近到期时间与数量、7 天内到期合计（数据由各 checkin_<name>.py 的
+    fetch_credits() 以 [CREDITS] 行输出）。
     webhook 优先级：--feishu <url> > 环境变量 AICHECKIN_FEISHU_WEBHOOK
                     > 同目录 config.json 的 feishuWebhook 字段
 推送失败仅告警，不影响签到退出码。
 """
 import json
-import os
 import re
 import subprocess
 import sys
@@ -96,7 +96,7 @@ def run(name: str, extra_args: list[str]) -> tuple[int, str]:
         return 1, ""
     cmd = [sys.executable, str(path), *defaults, *extra_args]
     print(f"\n========== 运行 {name} :: {' '.join(cmd[1:])} ==========")
-    r = subprocess.run(cmd, capture_output=True, text=True,
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False,
                        encoding="utf-8", errors="replace")
     if r.stdout:
         print(r.stdout, end="")
@@ -160,6 +160,70 @@ def build_message(results: list[tuple[str, int, str]], rc_total: int,
     return "\n".join(body)
 
 
+def md_escape(text: str) -> str:
+    """只替换 <，避免日志内容被 lark_md 当成标签；保留 > 与 & 原样显示。"""
+    return str(text).replace("<", "＜")
+
+
+def card_credits_line(name: str, summary: dict) -> str:
+    """卡片中的单家积分块：余额/到期信息一行，估算备注单独灰色一行。"""
+    if "error" in summary:
+        return (f"**{DISPLAY_NAMES[name]}**　<font color='red'>查询失败</font>\n"
+                f"<font color='grey'>{md_escape(str(summary['error'])[:80])}</font>")
+    parts = [f"余额 **{cc.fmt_num(summary.get('remaining'))}**"]
+    nearest = summary.get("nearest")
+    if nearest:
+        parts.append(f"最近到期 **{nearest['expire']}**（{cc.fmt_num(nearest['credits'])}）")
+    expiring = summary.get("expiring_7d")
+    if expiring:
+        est = "~" if summary.get("expiring_7d_estimated") else ""
+        parts.append(f"7 天内到期 **{est}{cc.fmt_num(expiring)}**")
+    line = f"**{DISPLAY_NAMES[name]}**　" + "　|　".join(parts)
+    if summary.get("note"):
+        line += f"\n<font color='grey'>{md_escape(summary['note'])}</font>"
+    return line
+
+
+def build_card(results: list[tuple[str, int, str]], rc_total: int,
+               credits: dict | None = None) -> dict:
+    """组装飞书交互卡片：成功率着色标题 + 每家状态 + 积分小节。"""
+    ok_count = sum(1 for _, rc, _ in results if rc == 0)
+    total = len(results)
+    template = "green" if ok_count == total else ("red" if ok_count == 0 else "orange")
+    elements = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": (
+            f"**成功** {ok_count}/{total} 家　|　**聚合退出码** {rc_total}\n"
+            f"<font color='grey'>{datetime.now():%Y-%m-%d %H:%M:%S}</font>")}},
+        {"tag": "hr"},
+    ]
+    for name, rc, output in results:
+        status = ("<font color='green'>成功</font>" if rc == 0
+                  else "<font color='red'>失败</font>")
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": (
+            f"**{DISPLAY_NAMES[name]}**　{status}\n"
+            f"<font color='grey'>{md_escape(detail_line(output))}</font>")}})
+    credit_entries = [(n, s) for n, s in (credits or {}).items() if s]
+    if credit_entries:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "div", "text": {"tag": "lark_md",
+                                                "content": "**积分与过期**"}})
+        elements.extend(
+            {"tag": "div", "text": {"tag": "lark_md",
+                                    "content": card_credits_line(name, summary)}}
+            for name, summary in credit_entries)
+    elements.append({"tag": "note", "elements": [
+        {"tag": "plain_text", "content": "自动签到 · 数据来自本机客户端登录态"}]})
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text",
+                      "content": f"AI IDE 每日签到 · {ok_count}/{total} 成功"},
+        },
+        "elements": elements,
+    }
+
+
 def main(argv: list[str]) -> int:
     if not argv or argv[0] in {"-h", "--help", "help"}:
         print(__doc__)
@@ -195,7 +259,9 @@ def main(argv: list[str]) -> int:
     if not no_push:
         webhook = feishu_notify.resolve_webhook(webhook_arg)
         if webhook:
-            sent = feishu_notify.push(webhook, build_message(results, rc, credits))
+            text = build_message(results, rc, credits)
+            card = build_card(results, rc, credits)
+            sent = feishu_notify.push(webhook, text, card=card)
             log("飞书推送：" + ("已发送" if sent else "失败（详见上方告警）"))
         else:
             log("未配置飞书 webhook（config.json feishuWebhook / AICHECKIN_FEISHU_WEBHOOK / --feishu），跳过推送")

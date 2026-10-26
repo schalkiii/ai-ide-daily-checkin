@@ -6,6 +6,7 @@
                     > 同目录 config.json 的 feishuWebhook 字段
     推送通道：curl 主通道（Windows 加 --ssl-no-revoke，规避 schannel 证书
               吊销离线握手失败）+ requests 兜底
+    消息格式：优先交互卡片（push 的 card 参数），卡片失败自动回退纯文本
     推送失败仅告警，绝不影响签到退出码
 """
 import json
@@ -32,11 +33,9 @@ def resolve_webhook(cli_value: str | None = None) -> str:
         return ""
 
 
-def push(webhook: str, text: str) -> bool:
-    """推送文本消息到飞书群机器人，返回是否送达。任何异常仅告警，不抛出。"""
-    if not webhook:
-        return False
-    body = json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False)
+def _send(webhook: str, payload: dict, label: str) -> bool:
+    """curl 主通道 + requests 兜底发送一次 payload，返回是否送达。"""
+    body = json.dumps(payload, ensure_ascii=False)
 
     # 1) curl 主通道：经 trae-daily-checkin 实战验证可用（Windows curl 不走
     #    环境代理、直连可达；--ssl-no-revoke 规避 schannel 离线吊销检查失败）
@@ -44,26 +43,36 @@ def push(webhook: str, text: str) -> bool:
         args = ["curl", "-sS", "-H", "Content-Type: application/json", "-d", body, webhook]
         if sys.platform == "win32":
             args.insert(1, "--ssl-no-revoke")
-        r = subprocess.run(args, capture_output=True, text=True, timeout=20,
+        r = subprocess.run(args, capture_output=True, text=True, timeout=20, check=False,
                            encoding="utf-8", errors="replace")
         out = (r.stdout or "").strip()
         if r.returncode == 0 and '"code":0' in out.replace(" ", ""):
-            print("[INFO] 飞书通知已发送 (curl)")
+            print(f"[INFO] 飞书通知已发送（{label}/curl）")
             return True
         raise RuntimeError(f"curl 退出码 {r.returncode}: {out[:200]}")
     except Exception as e:
-        print(f"[WARN] curl 推送失败（{e}），尝试 requests 兜底...", file=sys.stderr)
+        print(f"[WARN] {label} curl 推送失败（{e}），尝试 requests 兜底...", file=sys.stderr)
 
     # 2) requests 兜底（走 HTTP(S)_PROXY 环境变量）
     try:
         import requests
-        resp = requests.post(
-            webhook, json={"msg_type": "text", "content": {"text": text}}, timeout=10)
+        resp = requests.post(webhook, json=payload, timeout=10)
         if resp.status_code == 200 and resp.json().get("code") == 0:
-            print("[INFO] 飞书通知已发送 (requests)")
+            print(f"[INFO] 飞书通知已发送（{label}/requests）")
             return True
-        print(f"[WARN] 飞书通知发送失败：HTTP {resp.status_code} {resp.text[:200]}",
+        print(f"[WARN] {label} 推送失败：HTTP {resp.status_code} {resp.text[:200]}",
               file=sys.stderr)
     except Exception as e:
-        print(f"[WARN] 飞书通知发送失败：{e}", file=sys.stderr)
+        print(f"[WARN] {label} 推送失败：{e}", file=sys.stderr)
     return False
+
+
+def push(webhook: str, text: str, card: dict | None = None) -> bool:
+    """推送消息到飞书群机器人：优先交互卡片，失败回退纯文本。任何异常仅告警，不抛出。"""
+    if not webhook:
+        return False
+    if card is not None:
+        if _send(webhook, {"msg_type": "interactive", "card": card}, "卡片"):
+            return True
+        print("[WARN] 卡片推送失败，回退纯文本消息...", file=sys.stderr)
+    return _send(webhook, {"msg_type": "text", "content": {"text": text}}, "文本")
