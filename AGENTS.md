@@ -16,7 +16,8 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
 
 ## 技术栈与约定
 - 每家一个 `checkin_<name>.py`，解密路径与接口各异（详见 README 一览表）。
-- 飞书推送：统一入口 `checkin.py` 汇总各家状态，经 `feishu_notify.py` 发**交互卡片**（状态色绿/橙/红 + 每家一行，`msg_type=interactive`；curl 主 + requests 兜底）；webhook 优先级 `--feishu` > 环境变量 `AICHECKIN_FEISHU_WEBHOOK` > 同目录 `config.json`（gitignore，本地与 trae-daily-checkin 同 webhook）；推送失败不影响退出码。
+- 飞书推送：统一入口 `checkin.py` 汇总各家状态，经 `feishu_notify.py` 发**交互卡片**（状态色绿/橙/红 + 每家一行；卡片失败自动回退纯文本；curl 主 + requests 兜底）；webhook 优先级 `--feishu` > 环境变量 `AICHECKIN_FEISHU_WEBHOOK` > 同目录 `config.json`（gitignore，本地与 trae-daily-checkin 同 webhook）；推送失败不影响退出码。
+- 积分余额与过期：各 `checkin_<name>.py` 的 `fetch_credits()` 以 `[CREDITS] {json}` 行输出，`checkin.py` 汇总成推送里的「积分与过期」小节（`credits_common.py` 提供时间解析/临期合计）。三家接口：Qoder=`/api/v2/quota/usage`+claim 重放（expiresAt 记账到 `credits_ledger.json`，历史按规则估算）；Trae=`/pay/ide_user_ent_usage`（逐包 expire_time，**必须 require_usage 并跳过已用尽包**）；WorkBuddy=`/v2/billing/meter/get-user-resource`（**必须带 `User-Agent: CodeBuddyCN`**，否则 403）。
 - 计划任务注册走 `install-schedule.ps1`：**必须纯 ASCII**（WinPS5.1 按 GBK 读无 BOM 的 UTF-8 脚本会崩）；
   密码用控制台 `Read-Host -AsSecureString` 采集（`PromptForCredential` 在纯 console 宿主里不弹窗）。
 - 库库脱机读**默认上下文** Cookie 仓 `%APPDATA%\baidugenflowpro\Network\Cookies` 优先；
@@ -52,6 +53,8 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
   `checkin.py kuku` 保留手动入口，日常由姊妹 CDP 项目 `kuku-ai-daily-checkin` 负责。
 - 2026-10-27 实测：Qoder 领 100 Credits（余额 1600→1700）、Trae 今日已签 100、
   WorkBuddy 今日已签、豆包已签（连签 3 天）；Trae 最近可用签到包 10-30 到期（剩 112.59）。
+- 推送已含「积分与过期」小节：Qoder / Trae / WorkBuddy 三家余额、最近到期与 7 天内到期合计；
+  豆包、库库暂无积分接口，不占小节。
 - 豆包 `710010702` 已于 2026-10-27 恢复（10-22 曾为服务端异常）；`doubao_auth.json` 缓存可用。
 - 本机 `.venv` 可用（Python 3.13.15）；系统 Python313 同样已装齐
   requests/cryptography/pycryptodome。
