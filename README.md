@@ -31,18 +31,18 @@
 | 产品 | 凭证路径 | 加密方式 | 签到接口 | 关键 Header |
 |------|----------|----------|----------|-------------|
 | **Qoder CN** | `%APPDATA%\com.qodercn.app.stable\` 下 `Local State` + `auth.v1.dat` | DPAPI 解出 AES-256 key → AES-GCM 解 auth.v1.dat | `GET /sash/api/v1/me/campaigns`；`POST .../campaigns/{id}/claim` | `Authorization: Bearer <token>` + **`Cosy-ClientType: 10`**（缺它 campaigns 返回空数组） |
-| **Trae CN / SOLO** | `%APPDATA%\Trae CN\User\globalStorage\storage.json` 的 `iCubeAuthInfo://icube.cloudide` | 自定义：SHA-512 派生 + AES-CBC + 去 64B HMAC | `POST .../checkin_credits/status`；`POST .../checkin_credits/claim` | `Authorization: Cloud-IDE-JWT <token>` + `x-device-id` + `X-User-Region` |
+| **Trae CN / SOLO** | `%APPDATA%\Trae CN\User\globalStorage\storage.json` 的 `iCubeAuthInfo://icube.cloudide` | 自定义：SHA-512 派生 + AES-CBC + 去 64B HMAC | `POST .../checkin_credits/status`；`POST .../checkin_credits/claim`；`POST .../pay/ide_user_ent_usage`（额度包，推送最近过期） | `Authorization: Cloud-IDE-JWT <token>` + `x-device-id` + `X-User-Region` |
 | **WorkBuddy** | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\*.info` | 5.6.0 前明文；5.6.0 起 `$wbEncrypted`（AES-256-GCM，at-rest 密钥派生） | `POST /v2/billing/meter/checkin-status`；`POST .../daily-checkin` | `Authorization: Bearer <accessToken>` + `X-User-Id` + `X-Domain` |
 | **库库AI (GenFlowPro)** | `%APPDATA%\baidugenflowpro\Network\Cookies`（默认上下文仓） | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-GCM 解 BDUSS/STOKEN | `GET /api/genflowpro/freepoint/homenew`；`POST .../taskComplete`（置对话任务为可领）；`POST .../rewardClaim` | 仅 `Cookie: BDUSS=..; STOKEN=..; gfprotpl=genflowpro`（**无 Authorization/签名**） |
 | **豆包 PC (Doubao)** | `%LOCALAPPDATA%\Doubao\User Data\` 的 `Local State` + `Default\Network\Cookies` | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-256-GCM 解 v10 cookie（剥 SHA256(host_key) 域绑定） | `POST /alice/ug/campaign/landing/get`；`POST .../v3/detail/`；`POST .../landing/checkin` | 仅 `Cookie: sessionid=..; sid_tt=..`（**无 Authorization**）；公共 query 从客户端日志解析 |
 
 五家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`）、豆包 detail 显示 `checked_in_today:true` 时直接跳过，重复运行不会重复发放。
 
-> ⚠️ **2026-10-15 活动改版**：库库旧 `freepoint`（`daily_login`/`daily_chat` 各 +50）已**下线**——`homenew` 现返回空 `activities`，本脱机 provider 对库库当前不再产出（`checkin_kuku.py` 安全 no-op）。新活动「金秋厚礼」走 `kuku.baidu.com/comps/view` 且每个请求都带 App 注入的 `window.jsToken`，**脱机无法生成该令牌**，故库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取（连签送 SVIP + 对话积分+10）。
+> ⚠️ **2026-10-15 活动改版**：库库旧 `freepoint`（`daily_login`/`daily_chat` 各 +50）已**下线**——`homenew` 现返回空 `activities`，本脱机 provider 对库库当前不再产出（`checkin_kuku.py` 安全 no-op）。新活动「金秋厚礼」走 `kuku.baidu.com/comps/view` 且每个请求都带 App 注入的 `window.jsToken`，**脱机无法生成该令牌**，故库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取（连签送 SVIP + 对话积分+10）。**2026-10-27 起 `checkin.py all` 默认跳过库库**，`checkin.py kuku` 仍保留手动入口。
 
 （以下为改版前 freepoint 脱机方案的**历史说明**，接口现均已下线）库库旧 freepoint 的 `daily_login`/`daily_chat` 曾可纯脱机领满 100：`daily_chat` 先调 `POST .../freepoint/taskComplete`（`task_type=CHAT`）置为可领再 `rewardClaim`（实测服务端曾接受该信号、不校验是否真对话过）；`invite_*` 需真实邀请。
 
-> ⚠️ **2026-10-22 豆包签到服务端异常（实测）**：`/landing/checkin` 对本人账号返回 `710010702 系统错误`。已用 CDP 在**官方 PC 客户端弹窗**点「立即签到」复现，请求 URL/body/Header 与本脚本完全一致，因此判定为服务端问题，而非脱机实现或参数/签名问题（`landing/get`、`v3/detail` 均正常返回 `checked_in_today:false`）。`checkin_doubao.py` 对已签/成功/失败均如实上报，服务端恢复后无需改代码。豆包每日签到为 **+200 额度**（活动 group `pc_incentive_task_mvp_v3`）。
+> ⚠️ **2026-10-22 豆包签到服务端异常（实测）**：`/landing/checkin` 对本人账号返回 `710010702 系统错误`。已用 CDP 在**官方 PC 客户端弹窗**点「立即签到」复现，请求 URL/body/Header 与本脚本完全一致，因此判定为服务端问题，而非脱机实现或参数/签名问题（`landing/get`、`v3/detail` 均正常返回 `checked_in_today:false`）。`checkin_doubao.py` 对已签/成功/失败均如实上报，服务端恢复后无需改代码。豆包每日签到为 **+200 额度**（活动 group `pc_incentive_task_mvp_v3`）。**2026-10-27 已恢复正常（连签 3 天）。**
 
 ---
 
@@ -62,7 +62,7 @@ ai-ide-daily-checkin/
 ├── requirements.txt        # requests / cryptography / pycryptodome
 ├── auths.example.json      # 可选：多账号 / 免本地解密（复制为 auths.json）
 ├── setup.bat               # 建 venv + 装依赖
-├── run-all.bat             # 手动跑五家（前台，带 pause）
+├── run-all.bat             # 手动跑当前启用的各家（默认 4 家，前台，带 pause）
 ├── install-schedule.bat    # 注册每日计划任务（默认 10:05；调用下方 ps1）
 ├── install-schedule.ps1    # 计划任务实现：『不管是否登录都运行』+ StartWhenAvailable
 ├── uninstall-schedule.bat  # 删除计划任务
@@ -87,7 +87,7 @@ setup.bat
 .venv\Scripts\python.exe checkin.py qoder claim --dry-run
 .venv\Scripts\python.exe checkin.py doubao --dry-run
 
-:: 3) 正式领取五家
+:: 3) 正式领取当前启用的各家（默认 4 家，库库暂不参与）
 .venv\Scripts\python.exe checkin.py all
 ```
 
@@ -111,19 +111,18 @@ setup.bat
 
 ## 飞书推送（可选）
 
-`checkin.py` 跑完五家后汇总发一条飞书**交互卡片**（与 trae-daily-checkin 同一个机器人）：
+`checkin.py` 跑完当前启用的各家后汇总发一条飞书**交互卡片**（与 trae-daily-checkin 同一个机器人）：
 
 ```text
-┌ AI IDE 每日签到 · 5/5 家成功 ────────── green ┐   ← 全成功绿 / 部分失败橙 / 全失败红
-│ ✅ Qoder CN   没有 CLAIMABLE 的活动，无需签到      │
-│ ✅ Trae CN    今日已签到，当前积分：100            │
-│ ✅ WorkBuddy  今日已签到                          │
-│ ✅ 库库AI     当前没有可领取的活动                 │
-│ ✅ 豆包       签到成功，+200 额度                  │
-│ ────────────────────────────────────────────  │
-│ 5/5 家成功 · 聚合退出码 0                        │
-│ 时间：2026-10-21 10:05:12                        │
-└──────────────────────────────────────────────┘
+┌ AI IDE 每日签到 · 4/4 家成功 ────────── green ┐   ← 全成功绿 / 部分失败橙 / 全失败红
+│ ✅ Qoder CN   没有 CLAIMABLE 的活动，无需签到                      │
+│ ✅ Trae CN    今日已签到；最近过期：签到奖励 10-30 已用 37.41/150（剩 112.59）│
+│ ✅ WorkBuddy  今日已签到                                          │
+│ ✅ 豆包       签到成功，+200 额度                                  │
+│ ───────────────────────────────────────────────────────────── │
+│ 4/4 家成功 · 聚合退出码 0                                         │
+│ 时间：2026-10-27 11:20:55                                         │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 每家一行：状态图标 + 加粗名称 + 灰色详情（详情取该家输出里最后一条关键行）。
@@ -183,7 +182,7 @@ schtasks /Create /F /SC DAILY /ST 10:05 /TN "AICheckinQoder" /IT ^
 - **Q8 计划任务 `LastResult` = 2147942402（0x80070002 找不到文件）、`checkin.log` 无新记录** — 任务动作里是**裸 `pythonw.exe`**：Task Scheduler 按**机器 PATH**（而非交互用户的 PATH）解析裸命令名，机器 PATH 无 Python 时动作启动即失败，签到根本不会执行。`install-schedule.ps1` 已修复为始终注册**绝对路径**解释器（`.venv` 优先，否则解析系统 `pythonw.exe` 的绝对路径），重新运行 `install-schedule.bat` 即可。
   注意：对已存凭据的现有任务，`Set-ScheduledTask` / `schtasks /Change` 都要求重新输入 Windows 密码才能改写（凭据由系统 LSA 保管），**无法免密修复**；任务若已处于该状态，只能重跑 `install-schedule.bat` 输入密码刷新注册。改 Windows 登录密码后同样需要重跑刷新。
 - **Q9 豆包「Cookie 库被豆包独占 / 未读取到任何豆包登录态」** — 豆包运行时对 `Default\Network\Cookies` 持有独占句柄，Windows 下无法复制或只读打开。脚本会回退 `doubao_auth.json` 缓存：**首次请关闭豆包运行一次**（`checkin.py doubao` 或 `--dry-run`）建立缓存。之后豆包开着也能用缓存并通过接口校验；若缓存也失效（`710012001 登录已过期`），打开豆包刷新登录态后关闭再跑一次即可。
-- **Q10 豆包签到 `710010702 系统错误`** — **服务端问题**，非本脚本参数/签名问题：2026-10-22 已用 CDP 在官方 PC 客户端弹窗点「立即签到」复现，请求报文完全一致；同时 `landing/get`、`v3/detail` 正常。脚本会如实报失败并返回 1，服务端恢复后自动成功，无需改代码。
+- **Q10 豆包签到 `710010702 系统错误`** — **服务端问题**，非本脚本参数/签名问题：2026-10-22 已用 CDP 在官方 PC 客户端弹窗点「立即签到」复现，请求报文完全一致；同时 `landing/get`、`v3/detail` 正常。脚本会如实报失败并返回 1，服务端恢复后自动成功，无需改代码；**2026-10-27 已恢复正常**。
 - **Q11 豆包公共 query 参数（device_id/web_id/fp）从哪来** — 优先从 `%LOCALAPPDATA%\Doubao\User Data\sdk_storage\log\saman_*.log` 最近的 PC 请求 URL 解析（只读日志），并缓存到 `doubao_auth.json`；解析不到时退回缓存/最小集。实测最小集即可正常查询状态。
 
 ---

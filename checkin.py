@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
-"""统一签到入口：按参数调度五个产品的签到脚本，并汇总推送飞书（可选）。
+"""统一签到入口：按参数调度各家签到脚本，并汇总推送飞书（可选）。
 
-    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy / 库库AI / 豆包
+    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy / 豆包（库库暂不参与）
     python checkin.py qoder claim    # 只跑 Qoder，并把参数透传给 checkin_qoder.py
     python checkin.py trae
     python checkin.py workbuddy
-    python checkin.py kuku
+    python checkin.py kuku           # 库库脱机接口已失效，保留手动入口；日常由姊妹 CDP 项目负责
     python checkin.py doubao
     python checkin.py all --dry-run  # --dry-run 只透传给支持的脚本（Qoder / 库库 / 豆包），其余忽略
     python checkin.py all --no-push  # 只签到、不推送飞书（测试用）
     python checkin.py all --feishu <url>  # 临时指定飞书 webhook（覆盖 config.json）
 
-五家互相独立：某个客户端未安装/未登录只会让该家失败，不影响其余。
+各家互相独立：某个客户端未安装/未登录只会让该家失败，不影响其余。
 最终退出码 = 所有已尝试脚本退出码的按位或（0 表示全部成功）。
-计划任务里用一条 `pythonw checkin.py all` 即可覆盖五家。
+计划任务里用一条 `pythonw checkin.py all` 即可覆盖当前启用的几家；库库暂不参与，
+由姊妹 CDP 项目 `kuku-ai-daily-checkin` 负责。
 
 飞书推送（feishu_notify.py）：跑完汇总各家状态发一条交互卡片（状态色 + 每家一行详情）。
     webhook 优先级：--feishu <url> > 环境变量 AICHECKIN_FEISHU_WEBHOOK
@@ -41,6 +42,9 @@ SCRIPTS = {
     "kuku": ("checkin_kuku.py", []),
     "doubao": ("checkin_doubao.py", []),
 }
+# 库库脱机接口已失效（2026-10 活动改用 App 注入的 jsToken），暂不参与 all；
+# 需要恢复时把 "kuku" 加回，或直接 `checkin.py kuku` 手动跑。
+ALL_ORDER = ["qoder", "trae", "workbuddy", "doubao"]
 DISPLAY_NAMES = {
     "qoder": "Qoder CN",
     "trae": "Trae CN",
@@ -165,13 +169,13 @@ def main(argv: list[str]) -> int:
     webhook_arg, no_push, rest = extract_push_args(argv)
     target, *passthrough = rest
     if target == "all":
-        order = ["qoder", "trae", "workbuddy", "kuku", "doubao"]
+        order = ALL_ORDER
     elif target in SCRIPTS:
         order = [target]
     else:
         # 未知目标：当作全部，并把该 token 一并透传（容错）
         log(f"未识别目标 '{target}'，按 all 处理；额外参数透传。")
-        order, passthrough = ["qoder", "trae", "workbuddy", "kuku", "doubao"], rest
+        order, passthrough = ALL_ORDER, rest
 
     results: list[tuple[str, int, str]] = []
     rc = 0

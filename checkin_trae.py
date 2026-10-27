@@ -24,6 +24,11 @@
     POST https://api.trae.cn/trae/api/v2/ug/checkin_credits/status
     POST https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim
     Headers：Authorization: Cloud-IDE-JWT <token> + x-device-id + X-User-Region
+
+最近过期额度（推送用）：
+    POST https://api.trae.cn/trae/api/v2/pay/ide_user_ent_usage  {"require_usage": true}
+        user_entitlement_pack_list[]：expire_time 到期、quota.credits_limit 总量、
+        usage.credits_amount 已用；跳过已用尽的包，取剩余包中最早到期者。
 """
 import base64
 import hashlib
@@ -31,6 +36,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +47,7 @@ from Crypto.Util.Padding import unpad
 # ---- 配置 ----
 AUTH_KEY = "iCubeAuthInfo://icube.cloudide"
 API_BASE = "https://api.trae.cn/trae/api/v2/ug/checkin_credits"
+ENTITLEMENT_API = "https://api.trae.cn/trae/api/v2/pay/ide_user_ent_usage"
 REQ_SOURCE = 1  # 1=Trae CN IDE；2=SOLO/企业版（同一账号积分互通，用 1 即可）
 
 # iCube 登录态解密常量（与 Trae 客户端加密格式对应）
@@ -162,7 +169,7 @@ def load_device_id() -> str:
     return DEVICE_ID_FALLBACK
 
 
-def api(url: str, token: str, region: str, device_id: str) -> dict:
+def auth_headers(token: str, region: str, device_id: str) -> dict:
     headers = {
         "Authorization": f"Cloud-IDE-JWT {token}",
         "Content-Type": "application/json",
@@ -170,9 +177,52 @@ def api(url: str, token: str, region: str, device_id: str) -> dict:
     }
     if region:
         headers["X-User-Region"] = region
-    r = requests.post(url, headers=headers, json={"req_source": REQ_SOURCE}, timeout=30)
+    return headers
+
+
+def api(url: str, token: str, region: str, device_id: str) -> dict:
+    r = requests.post(url, headers=auth_headers(token, region, device_id),
+                      json={"req_source": REQ_SOURCE}, timeout=30)
     r.raise_for_status()
     return r.json()
+
+
+def fmt_num(value: float) -> str:
+    return f"{value:.2f}".rstrip("0").rstrip(".") or "0"
+
+
+def expiring_note(name: str, token: str, region: str, device_id: str) -> str:
+    """最近到期且仍有剩余的积分包摘要；已用尽的不算，查询失败返回空串。"""
+    try:
+        r = requests.post(ENTITLEMENT_API, headers=auth_headers(token, region, device_id),
+                          json={"require_usage": True, "req_source": REQ_SOURCE}, timeout=30)
+        r.raise_for_status()
+        packs = (r.json() or {}).get("user_entitlement_pack_list") or []
+    except Exception as e:
+        log(f"[{name}] 额度包查询失败（已忽略）：{e}")
+        return ""
+
+    now, best = time.time(), None
+    for pack in packs:
+        info = pack.get("entitlement_base_info") or {}
+        extra = (info.get("product_extra") or {}).get("package_extra") or {}
+        quota = extra.get("quota") or info.get("quota") or {}
+        total = quota.get("credits_limit")
+        expire = pack.get("expire_time") or info.get("end_time") or 0
+        if not total or expire <= now:
+            continue
+        used = (pack.get("usage") or {}).get("credits_amount") or 0
+        if total - used <= 0:
+            continue
+        if best is None or expire < best[3]:
+            best = (extra.get("package_name") or pack.get("display_desc") or "积分包",
+                    total, used, expire)
+    if best is None:
+        return ""
+    name, total, used, expire = best
+    expires = datetime.fromtimestamp(expire)
+    return (f"；最近过期：{name}（{expires:%Y-%m-%d %H:%M}）"
+            f"已用 {fmt_num(used)}/{fmt_num(total)}（剩 {fmt_num(total - used)}）")
 
 
 def unwrap(resp: dict) -> dict:
@@ -198,7 +248,8 @@ def checkin_api(name: str, auth: dict, device_id: str) -> bool:
         return False
 
     if status.get("checked_in"):
-        log(f"[{name}] (API) 今日已签到，当前积分：{status.get('credits')}")
+        log(f"[{name}] (API) 今日已签到，当前积分：{status.get('credits')}"
+            f"{expiring_note(name, token, region, device_id)}")
         return True
     if not status.get("enable"):
         log(f"[{name}] 签到不可用：{json.dumps(status, ensure_ascii=False)[:200]}")
@@ -213,7 +264,8 @@ def checkin_api(name: str, auth: dict, device_id: str) -> bool:
     if claim.get("code") == 0:
         try:
             after = unwrap(api(f"{API_BASE}/status", token, region, device_id))
-            log(f"[{name}] (API) 签到成功，当前积分：{after.get('credits', '?')}")
+            log(f"[{name}] (API) 签到成功，当前积分：{after.get('credits', '?')}"
+                f"{expiring_note(name, token, region, device_id)}")
         except Exception:
             log(f"[{name}] (API) 签到成功")
         return True
