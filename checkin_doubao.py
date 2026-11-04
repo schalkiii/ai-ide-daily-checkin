@@ -22,8 +22,16 @@
         -> tasks[daily_signin].daily_checkin.checked_in_today / continuous_days / reward
     POST /alice/ug/campaign/landing/checkin  {"scene": <group>}
     公共 query 参数（aid=582478、device_id、web_id、fp 等）从客户端日志
-    sdk_storage/log/saman_*.log 里最近的 PC 请求 URL 解析；缺失时依次用缓存、最小集。
-    活动 group = pc_incentive_task_mvp_v3，每日 +200 额度。
+    sdk_storage/log/ 里最近的 PC 请求 URL 解析；缺失时依次用缓存、最小集。
+
+活动 group = pc_incentive_task_mvp_v3，每日签到 +200 额度。
+
+设备参数决定任务是否可见（2026-11-04 实测）：
+    v3/detail 只有在请求带上 device_id/web_id/fp 等 PC 公共参数时才返回 daily_signin；
+    缺这些参数时组内只剩 chat_activity + points_milestone，会被误判成「签到已下线」。
+    客户端 2.34.6 起把请求 URL 记进 saman_frontend_*.log（不再是裸文本），
+    common_params_from_log() 已同时覆盖主日志与前端日志两种格式。
+    当日 landing/checkin 仍返回 710010702（与 2026-10-22 同症状，见下方服务端问题说明）。
 
 已知服务端问题（2026-10-22 实测）：
     官方 PC 客户端弹窗点「立即签到」同样返回 710010702「系统错误」，报文与抓包完全一致，
@@ -86,6 +94,10 @@ MINIMAL_COMMON = {
     "client_platform": "pc_client",
 }
 URL_RE = re.compile(r"https://www[.]doubao[.]com/\S+")
+# 2.34.6 起客户端把 XHR 记进 saman_frontend_*.log 的资源计时条目（URL 被 "name":"…" 包裹）。
+# 只扫 saman_2*.log 会解析不到 device_id/web_id/fp，而缺这些设备参数时服务端根本不返回
+# daily_signin 任务（会被误判成「活动改版」），所以两种日志都要读、正则也不同。
+NAME_URL_RE = re.compile(r'"name":"(https://www[.]doubao[.]com/[^"]+)"')
 LOG_TAIL_BYTES = 16 * 1024 * 1024
 
 BASE_DIR = Path(__file__).parent
@@ -226,11 +238,16 @@ def save_cache(cookie_header: str, params: dict) -> None:
 
 # ---- 公共 query 参数 ----
 def common_params_from_log() -> dict:
-    """从最新的客户端日志尾部抓一条 PC 请求 URL，复用其公共 query。"""
+    """从最新的客户端日志尾部抓一条 PC 请求 URL，复用其公共 query（含 device_id/web_id/fp）。
+
+    主日志（saman_2*.log）里 URL 是裸文本，前端日志（saman_frontend_*.log）里 URL 被包在
+    资源计时条目的 "name":"…" 中，两种格式各用一个正则；命中条件仍是 aid=582478 且
+    client_platform=pc_client，取每个文件里最后一条（最新）。
+    """
     if not LOG_DIR.is_dir():
         return {}
-    logs = sorted(LOG_DIR.glob("saman_2*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for path in logs[:3]:
+    logs = sorted(LOG_DIR.glob("saman*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in logs[:6]:
         try:
             with open(path, "rb") as fh:
                 fh.seek(0, os.SEEK_END)
@@ -239,9 +256,12 @@ def common_params_from_log() -> dict:
                 text = fh.read().decode("utf-8", "replace")
         except OSError:
             continue
+        frontend = "frontend" in path.name
+        pattern = NAME_URL_RE if frontend else URL_RE
         found = {}
-        for match in URL_RE.finditer(text):
-            query = dict(parse_qsl(urlsplit(match.group(0)).query))
+        for match in pattern.finditer(text):
+            url = match.group(1) if frontend else match.group(0)
+            query = dict(parse_qsl(urlsplit(url).query))
             if query.get("aid") == "582478" and query.get("client_platform") == "pc_client":
                 found = query  # 保留最后一条（最新）
         if found:
@@ -362,7 +382,9 @@ def main() -> int:
 
     signin = daily_signin_of(detail)
     if signin is None:
-        log("活动详情中没有 daily_signin 任务（活动可能已改版）")
+        log("活动详情中没有 daily_signin 任务（device_id="
+            f"{params.get('device_id', '缺失')}；缺设备参数时服务端会裁剪该任务，"
+            "也可能是活动真的改版）")
         return 1
     reward = (signin.get("reward") or {}).get("reward_amount", "?")
     days = signin.get("total_days", "?")

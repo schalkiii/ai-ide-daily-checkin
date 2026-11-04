@@ -13,6 +13,9 @@ setup.bat                                            :: 建 .venv + 装 requests
 install-schedule.bat                                 :: 注册 AICheckinDaily（默认每天 10:05）
 ```
 统一入口 `checkin.py`，`all` 执行顺序 = qoder → trae → workbuddy → doubao（库库默认跳过）。
+本机未建 `.venv`：把 `.venv\Scripts\python.exe` 换成系统 `python.exe`
+（`C:\Users\Schal\AppData\Local\Programs\Python\Python313`）即可；计划任务已按 **10:00** 注册
+（`install-schedule.bat 10:00`，改时间需重输 Windows 密码）。
 
 ## 技术栈与约定
 - 每家一个 `checkin_<name>.py`，解密路径与接口各异（详见 README 一览表）。
@@ -36,28 +39,41 @@ install-schedule.bat                                 :: 注册 AICheckinDaily（
   `usage.credits_amount` 已用。**必须跳过已用尽（已用 ≥ 总量）的包**，在剩余包里取最早到期；
   2026-10-27 实测 10-28/10-29 的签到包 150/150 已用尽，真正可用的是 10-30 包（已用 37.41/150，剩 112.59）。
   该查询失败只省略推送里的这段，不影响签到本身。
-- 豆包活动 group = `pc_incentive_task_mvp_v3`，每日签到 +200 额度；状态以
+- 豆包活动 group = `pc_incentive_task_mvp_v3`，每日签到 +200；状态以
   `POST /alice/ug/campaign/v3/detail/` 的 `daily_signin.daily_checkin.checked_in_today` 为准，
-  签到接口 `POST /alice/ug/campaign/landing/checkin` 只传 `scene`。
-- **豆包 710010702 是服务端问题（2026-10-22 实测）**：官方 PC 客户端弹窗点「立即签到」同样返回
-  `710010702 系统错误`，请求报文与脚本完全一致；脚本如实报失败，服务端恢复后自动成功；**2026-10-27 已恢复并签到成功**。
+  签到接口 `POST /alice/ug/campaign/landing/checkin` 传 `scene`（客户端还会带 `biz_params`）。
+- **豆包 `daily_signin` 只在请求带上 `device_id/web_id/fp` 时才下发（2026-11-04 实测）**：缺设备参数时
+  组内只剩 `chat_activity` + `points_milestone`，会被误判成「签到已下线」。客户端 2.34.6 起把请求 URL
+  记进 `saman_frontend_*.log` 的资源计时条目 `"name":"https://…"`，`common_params_from_log()` 已同时解析
+  主日志（裸 URL）与前端日志两种格式；用最小集查询虽 code=0 但拿不到签到任务。
+- **豆包 `710010702 系统错误` 由服务端返回，非脱机实现/签名问题**：2026-10-22 用 CDP 在官方 PC 客户端弹窗点「立即签到」复现，
+  报文与脚本完全一致；`landing/checkin` 与 `landing/report` 同时返回该码，而 `landing/get`/`v3/detail` 正常。
+  脚本如实报失败返回 1，服务端恢复后无需改代码；**2026-10-27 曾恢复并签到成功，2026-11-04 再次出现**
+  （同日实测：官方 PC 客户端点「立即签到」也报系统错误）。
+- **未验证猜测（2026-11-04，用户提出）：`710010702` 可能是服务端隐藏的「距上次签到满 24 小时」校验**。
+  佐证：本账号 `last_checkin_date=2026-11-03`，11-04 08:56~09:00 脱机直调与客户端点击**都**报该码；
+  计划任务 10:00 触发时距昨天签到正好卡在 24 小时边界，能解释「有时好有时坏」以及 10-22「恢复」的现象。
+  待当天晚些时候（明显超过 24h）复测确认；若成立，把计划时间从 10:00 再往后挪几分钟即可根治。
 - 计划任务「不管是否登录都运行」**只有『保存了密码』(Password 登录类型) 时 DPAPI 才能非交互解密**；
   S4U / 服务账户 → `CryptUnprotectData failed` 全失败。改 Windows 密码后需重跑 `install-schedule.bat` 刷新凭据。
 - 库库旧 `freepoint`（daily_login/daily_chat）于 2026-10-15 已下线（homenew 返回空 activities），`checkin_kuku.py` 现对库库安全 no-op；新活动「金秋厚礼」走 `comps/view` 且每请求需 App 注入的 `window.jsToken`，脱机无法生成 → 库库改由姊妹 CDP 项目 `kuku-ai-daily-checkin` 领取。
 - 库库 `errno=-6` = STOKEN 陈旧：正常打开库库再优雅退出让其落盘，或改用 CDP 项目领取。
 
-## 当前状态（最近更新 2026-10-27）
-- 计划任务 `AICheckinDaily` 正常：动作为 `.venv\Scripts\pythonw.exe checkin.py all`（绝对路径），
-  LogonType=Password；最近一次 2026-10-27 10:05 跑完，LastTaskResult=0，下次 10-28 10:05。
+## 当前状态（最近更新 2026-11-04）
+- 计划任务 `AICheckinDaily` 正常：动作为 `C:\Users\Schal\AppData\Local\Programs\Python\Python313\pythonw.exe checkin.py all`
+  （绝对路径），LogonType=Password，每天 **10:00**（2026-10-24 带参重注册，脚本默认值仍是 10:05）；
+  2026-11-03 10:00 跑完 LastTaskResult=1（仅因豆包签到下线），2026-11-04 手动实测四家聚合退出码 0。
 - `checkin.py all` 当前覆盖 Qoder CN / Trae CN / WorkBuddy / 豆包 4 家；库库脱机暂停，
   `checkin.py kuku` 保留手动入口，日常由姊妹 CDP 项目 `kuku-ai-daily-checkin` 负责。
 - 2026-10-27 实测：Qoder 领 100 Credits（余额 1600→1700）、Trae 今日已签 100、
   WorkBuddy 今日已签、豆包已签（连签 3 天）；Trae 最近可用签到包 10-30 到期（剩 112.59）。
 - 推送已含「积分与过期」小节：Qoder / Trae / WorkBuddy 三家余额、最近到期与 7 天内到期合计；
   豆包、库库暂无积分接口，不占小节。
-- 豆包 `710010702` 已于 2026-10-27 恢复（10-22 曾为服务端异常）；`doubao_auth.json` 缓存可用。
-- 本机 `.venv` 可用（Python 3.13.15）；系统 Python313 同样已装齐
-  requests/cryptography/pycryptodome。
+- 豆包每日签到 2026-11-04 实测仍在（连签 4 天、最后 11-03、+200），但 `landing/checkin` 返回
+  `710010702` 服务端异常（同 10-22，官方客户端点「立即签到」也报错）；公共参数解析已修复为覆盖
+  `saman_frontend_*.log`，`doubao_auth.json` 已刷新出完整设备参数，
+  `checkin.py doubao --dry-run` 可正常看到签到状态。
+- 本机未建 `.venv`，日常与计划任务都用系统 Python313（已装齐 requests/cryptography/pycryptodome）。
 
 ## 分工 / 安全红线
 - 与姊妹项目 `kuku-ai-daily-checkin`（CDP 模拟 UI）互补：本项目免开客户端；库库对话项依赖 CDP 或手动。
