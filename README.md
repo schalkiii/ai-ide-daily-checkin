@@ -34,7 +34,7 @@
 | **Trae CN / SOLO** | `%APPDATA%\Trae CN\User\globalStorage\storage.json` 的 `iCubeAuthInfo://icube.cloudide` | 自定义：SHA-512 派生 + AES-CBC + 去 64B HMAC | `POST .../checkin_credits/status`；`POST .../checkin_credits/claim`；`POST .../pay/ide_user_ent_usage`（额度包，推送最近过期） | `Authorization: Cloud-IDE-JWT <token>` + `x-device-id` + `X-User-Region` |
 | **WorkBuddy** | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\*.info` | 5.6.0 前明文；5.6.0 起 `$wbEncrypted`（AES-256-GCM，at-rest 密钥派生） | `POST /v2/billing/meter/checkin-status`；`POST .../daily-checkin` | `Authorization: Bearer <accessToken>` + `X-User-Id` + `X-Domain` |
 | **库库AI (GenFlowPro)** | `%APPDATA%\baidugenflowpro\Network\Cookies`（默认上下文仓） | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-GCM 解 BDUSS/STOKEN | `GET /api/genflowpro/freepoint/homenew`；`POST .../taskComplete`（置对话任务为可领）；`POST .../rewardClaim` | 仅 `Cookie: BDUSS=..; STOKEN=..; gfprotpl=genflowpro`（**无 Authorization/签名**） |
-| **豆包 PC (Doubao)** | `%LOCALAPPDATA%\Doubao\User Data\` 的 `Local State` + `Default\Network\Cookies` | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-256-GCM 解 v10 cookie（剥 SHA256(host_key) 域绑定） | `POST /alice/ug/campaign/landing/get`；`POST .../v3/detail/`；`POST .../landing/checkin` | 仅 `Cookie: sessionid=..; sid_tt=..`（**无 Authorization**）；公共 query 从客户端日志解析 |
+| **豆包 PC (Doubao)** | `%LOCALAPPDATA%\Doubao\User Data\` 的 `Local State` + `Default\Network\Cookies` | Chromium Cookie 仓：DPAPI 解 os_crypt key → AES-256-GCM 解 v10 cookie（剥 SHA256(host_key) 域绑定） | `POST /alice/ug/campaign/landing/get`；`POST .../v3/detail/`；`POST .../landing/checkin` | 仅 `Cookie: sessionid=..; sid_tt=..`（**无 Authorization**）；公共 query 从客户端日志解析。**2026-11-06 起暂不参与 `all`**（`landing/checkin` 恒返回 710010702，疑缺风控指纹；`checkin.py doubao` 手动入口保留）|
 
 五家签到**均为幂等**：已签到时 Qoder 返回 `replayed:true`、Trae 返回 `checked_in:true`、WorkBuddy 返回 `code:10001`、库库任务领取后变 `FINISHED`（重复领 `errno≠0`）、豆包 detail 显示 `checked_in_today:true` 时直接跳过，重复运行不会重复发放。
 
@@ -44,7 +44,9 @@
 
 > ⚠️ **2026-10-22 豆包签到服务端异常（实测）**：`/landing/checkin` 对本人账号返回 `710010702 系统错误`。已用 CDP 在**官方 PC 客户端弹窗**点「立即签到」复现，请求 URL/body/Header 与本脚本完全一致，因此判定为服务端问题，而非脱机实现或参数/签名问题（`landing/get`、`v3/detail` 均正常返回 `checked_in_today:false`）。`checkin_doubao.py` 对已签/成功/失败均如实上报，服务端恢复后无需改代码。豆包每日签到 **+200 额度**（活动 group `pc_incentive_task_mvp_v3`）。**2026-10-27 曾恢复正常（连签 3 天）；2026-11-04 同一错误码再次出现，见下条。**
 
-> ⚠️ **2026-11-04 「豆包看不到每日签到」的真实原因（实测）**：`v3/detail` **只有在请求带上 `device_id`/`web_id`/`fp` 等 PC 公共参数时才返回 `daily_signin` 任务**；缺这些参数时组内只剩 `chat_activity`（一次性任务，各 +100）与 `points_milestone`（累计额度里程碑），极易被误判成「签到已下线」。客户端 2.34.6 起把请求 URL 记进 `saman_frontend_*.log` 的资源计时条目（形如 `"name":"https://…"`），而脚本原先只扫 `saman_2*.log`，于是退回缺设备参数的旧缓存 —— `common_params_from_log()` 现已同时覆盖主日志（裸 URL）与前端日志（JSON `name` 字段）两种格式。修好后 detail 正常返回 `daily_signin`（本账号连签 4 天、最后 11-03、+200），但 `landing/checkin` 与 `landing/report` 仍返回 `710010702 系统错误`；**同日在官方 PC 客户端点「立即签到」同样报系统错误**，确认仍是服务端问题（与 2026-10-22 一致），脚本如实报失败并返回 1。
+> ⚠️ **2026-11-04 「豆包看不到每日签到」的真实原因（实测）**：`v3/detail` **只有在请求带上 `device_id`/`web_id`/`fp` 等 PC 公共参数时才返回 `daily_signin` 任务**；缺这些参数时组内只剩 `chat_activity`（一次性任务，各 +100）与 `points_milestone`（累计额度里程碑），极易被误判成「签到已下线」。客户端 2.34.6 起把请求 URL 记进 `saman_frontend_*.log` 的资源计时条目（形如 `"name":"https://…"`），而脚本原先只扫 `saman_2*.log`，于是退回缺设备参数的旧缓存 —— `common_params_from_log()` 现已同时覆盖主日志（裸 URL）与前端日志（JSON `name` 字段）两种格式。修好后 detail 正常返回 `daily_signin`（本账号连签 4 天、最后 11-03、+200），但 `landing/checkin` 与 `landing/report` 仍返回 `710010702 系统错误`。
+>
+> **2026-11-06 追加结论**：11-04 14:41、11-06 23:07 两次复测距上次签到（11-03）都已远超 24 小时，`landing/checkin` 依旧 710010702，**「隐藏的 24 小时间隔校验」这一猜测被排除**；而豆包客户端内手动签到是可以的，因此当前工作假设为**脱机请求缺少客户端指纹（`msToken` / `a_bogus` 等由页面 JS 实时生成的风控参数）而被拦截**。已把豆包从 `checkin.py all` 暂停（`ALL_ORDER` 去掉 `doubao`），`checkin.py doubao` / `--dry-run` 保留手动入口；要恢复自动签到，得先补上指纹参数或改走 CDP 点击。
 
 ---
 
@@ -66,7 +68,7 @@ ai-ide-daily-checkin/
 ├── requirements.txt        # requests / cryptography / pycryptodome
 ├── auths.example.json      # 可选：多账号 / 免本地解密（复制为 auths.json）
 ├── setup.bat               # 建 venv + 装依赖
-├── run-all.bat             # 手动跑当前启用的各家（默认 4 家，前台，带 pause）
+├── run-all.bat             # 手动跑当前启用的各家（默认 3 家，前台，带 pause）
 ├── install-schedule.bat    # 注册每日计划任务（默认 10:05；调用下方 ps1）
 ├── install-schedule.ps1    # 计划任务实现：『不管是否登录都运行』+ StartWhenAvailable
 ├── uninstall-schedule.bat  # 删除计划任务
@@ -91,7 +93,7 @@ setup.bat
 .venv\Scripts\python.exe checkin.py qoder claim --dry-run
 .venv\Scripts\python.exe checkin.py doubao --dry-run
 
-:: 3) 正式领取当前启用的各家（默认 4 家，库库暂不参与）
+:: 3) 正式领取当前启用的各家（默认 3 家，库库、豆包暂不参与）
 .venv\Scripts\python.exe checkin.py all
 ```
 
@@ -122,11 +124,11 @@ setup.bat
 - 「积分与过期」小节：余额、最近到期时间与数量、7 天内到期合计；Qoder 的估算备注同样以灰色小字展示
 - 卡片发送失败时自动回退为纯文本消息，信息不丢
 
-卡片内容示例（2026-10-27 实测数值，实际在飞书中渲染为带色卡片）：
+卡片内容示例（数值取自 2026-10-27 实测；当前 `all` 调度 3 家，实际在飞书中渲染为带色卡片）：
 
 ```text
-AI IDE 每日签到 · 4/4 成功
-成功 4/4 家 ｜ 聚合退出码 0
+AI IDE 每日签到 · 3/3 成功
+成功 3/3 家 ｜ 聚合退出码 0
 ────────────────────────
 Qoder CN  成功
 已领取 100 Credits
@@ -134,8 +136,6 @@ Trae CN  成功
 (API) 今日已签到，当前积分：100
 WorkBuddy  成功
 (API) 今日已签到
-豆包  成功
-今日已签到（连签 3 天）
 ────────────────────────
 积分与过期
 Qoder CN  余额 1700 ｜ 最近到期 11-26 02:05（100）
@@ -217,8 +217,7 @@ schtasks /Create /F /SC DAILY /ST 10:05 /TN "AICheckinQoder" /IT ^
 - **Q8 计划任务 `LastResult` = 2147942402（0x80070002 找不到文件）、`checkin.log` 无新记录** — 任务动作里是**裸 `pythonw.exe`**：Task Scheduler 按**机器 PATH**（而非交互用户的 PATH）解析裸命令名，机器 PATH 无 Python 时动作启动即失败，签到根本不会执行。`install-schedule.ps1` 已修复为始终注册**绝对路径**解释器（`.venv` 优先，否则解析系统 `pythonw.exe` 的绝对路径），重新运行 `install-schedule.bat` 即可。
   注意：对已存凭据的现有任务，`Set-ScheduledTask` / `schtasks /Change` 都要求重新输入 Windows 密码才能改写（凭据由系统 LSA 保管），**无法免密修复**；任务若已处于该状态，只能重跑 `install-schedule.bat` 输入密码刷新注册。改 Windows 登录密码后同样需要重跑刷新。
 - **Q9 豆包「Cookie 库被豆包独占 / 未读取到任何豆包登录态」** — 豆包运行时对 `Default\Network\Cookies` 持有独占句柄，Windows 下无法复制或只读打开。脚本会回退 `doubao_auth.json` 缓存：**首次请关闭豆包运行一次**（`checkin.py doubao` 或 `--dry-run`）建立缓存。之后豆包开着也能用缓存并通过接口校验；若缓存也失效（`710012001 登录已过期`），打开豆包刷新登录态后关闭再跑一次即可。
-- **Q10 豆包签到 `710010702 系统错误`** — 2026-10-22 曾判定为**服务端问题**（已用 CDP 在官方 PC 客户端弹窗点「立即签到」复现，请求报文完全一致，`landing/get`、`v3/detail` 正常），脚本如实报失败并返回 1，服务端恢复后无需改代码；**2026-10-27 曾恢复，2026-11-04 再次出现**。
-  另一条**未验证**猜测：该码可能是服务端隐藏的「距上次签到满 24 小时」校验 —— 本账号 `last_checkin_date=11-03`，11-04 上午 08:56~09:00 脱机与客户端点击都报此码，卡着 24 小时边界；当天晚些时候超过 24h 再试即可证伪或证实（若成立，把计划任务时间往后挪几分钟就稳了）。
+- **Q10 豆包签到 `710010702 系统错误`** — `landing/checkin` 与 `landing/report` 同时返回该码，而 `landing/get`、`v3/detail` 正常。2026-10-22 曾判定为服务端问题（CDP 在官方客户端弹窗复现，当时报文与脚本一致），2026-10-27 曾恢复并签到成功；2026-11-04 起再次持续失败。**「服务端隐藏的 24 小时间隔校验」这一猜测已排除**：11-04 14:41、11-06 23:07 距上次签到（11-03）都远超 24 小时，依旧报同一码。当前工作假设是**脱机请求缺少客户端实时生成的风控指纹（`msToken` / `a_bogus`）**——因为在豆包客户端里手动点「立即签到」是可以的。为此**豆包已从 `checkin.py all` 暂停**（`ALL_ORDER` 去掉 `doubao`），`checkin.py doubao` 保留手动入口；补上指纹参数或改走 CDP 点击后，再把 `doubao` 加回 `ALL_ORDER` 即可恢复自动签到。
 - **Q11 豆包公共 query 参数（device_id/web_id/fp）从哪来** — 从 `%LOCALAPPDATA%\Doubao\User Data\sdk_storage\log\` 里最近的 PC 请求 URL 解析（只读日志）：主日志 `saman_2*.log` 是裸 URL，客户端 2.34.6 起改记在 `saman_frontend_*.log` 的资源计时条目 `"name":"https://…"` 里，两种格式脚本都会解析；解析结果缓存到 `doubao_auth.json`，都拿不到时才退回缓存/最小集。⚠️ **最小集只够 `landing/get` 与 `v3/detail` 返回 code=0，但服务端不会下发 `daily_signin` 任务**（缺 `device_id` 会被裁剪），所以「查不到签到任务」时先确认参数来源是日志而不是最小集。
 
 ---

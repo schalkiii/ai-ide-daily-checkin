@@ -39,7 +39,7 @@ import ctypes.wintypes as wt
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -315,10 +315,10 @@ def fetch_credits(session: requests.Session) -> dict:
     """查询 Qoder CN 积分余额与过期时间（2026-10-22 实测）。
 
     余额：/api/v2/quota/usage 的 addOnQuota.remaining（精确）。
-    过期：campaigns 端点无历史翻页（page/claimStatus/includeHistory/status
-    参数均只返回当前 campaign），逐笔 expiresAt 只在 claim 响应里——对已领取的
-    campaign 重放 claim 可拿回原始发放单。账本只覆盖启用本功能之后的每日记录；
-    更早的历史按「每日领取、领取后 30 天有效」规则估算（标注为估算）。
+    过期：唯一可信来源是账本 credits_ledger.json——对已领取的 campaign 重放 claim
+    拿回原始发放单（含精确的 expiresAt），按 grantId 去重累积。campaigns 端点
+    无历史翻页，更早或已轮替出当前列表的发放单无法从 API 取回，其过期时间不可追踪：
+    仅在 total > 账本合计时以纯说明呈现，绝不并入 expiring_7d、也不编造到期日。
     """
     doc = get(session, ENDPOINTS["quota"][0])
     if "_error" in doc:
@@ -326,8 +326,9 @@ def fetch_credits(session: requests.Session) -> dict:
     addon = doc.get("addOnQuota") or {}
     remaining, total = addon.get("remaining"), addon.get("total")
 
+    ledger = _record_grants(session)
     packs = []
-    for g in _record_grants(session):
+    for g in ledger:
         expire = cc.parse_ts(g.get("expiresAt"))
         if g.get("amount") and expire:
             packs.append({"desc": g.get("campaignKey") or "", "credits": g["amount"],
@@ -344,31 +345,14 @@ def fetch_credits(session: requests.Session) -> dict:
         result["nearest"] = {"credits": packs[0]["credits"],
                              "expire": cc.fmt_dt(packs[0]["expire_dt"])}
 
-    # 历史发放单无 API 可查：按「每日领取 amount、领取后 30 天有效」估算。
-    # amount 取当前 campaign 的 benefit；总笔数 = addOnQuota.total / amount。
-    if total and (daily := _daily_amount(session)):
-        n = round(total / daily)
-        if n >= 2:
-            first_expire = datetime.now() - timedelta(days=n - 1) + timedelta(days=30)
-            est_7d = daily * sum(
-                1 for k in range(n - 1)
-                if datetime.now() <= first_expire + timedelta(days=k)
-                <= datetime.now() + timedelta(days=7))
-            result["expiring_7d"] = (result["expiring_7d"] or 0) + est_7d
-            result["expiring_7d_estimated"] = True
-            result["note"] = (f"历史约 {cc.fmt_num(total - daily)} 积分按日滚动到期"
-                              f"（首签估算 {first_expire - timedelta(days=30):%m-%d}，"
-                              f"领取后 30 天有效，未记录的每日约 {daily}）")
+    # 诚实提示：累计发放(total) 大于账本已记录合计时，说明存在账本启用前、或已轮替出
+    # 当前活动列表、无法精确追踪过期时间的发放单。仅作说明，不影响上方账本明细的准确性。
+    ledger_total = sum((g.get("amount") or 0) for g in ledger)
+    if total is not None and total > ledger_total:
+        result["untracked_note"] = (
+            f"另有约 {cc.fmt_num(total - ledger_total)} 积分因 API 无历史发放单"
+            f"而无法精确追踪过期时间（不影响上方账本明细的准确性）")
     return result
-
-
-def _daily_amount(session: requests.Session):
-    doc = get(session, "/sash/api/v1/me/campaigns")
-    for c in doc.get("campaigns") or []:
-        amount = (c.get("benefit") or {}).get("amount")
-        if amount:
-            return amount
-    return None
 
 
 def main() -> int:

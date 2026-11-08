@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 """统一签到入口：按参数调度各家签到脚本，并汇总推送飞书（可选）。
 
-    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy / 豆包（库库暂不参与）
+    python checkin.py all            # 依次跑 Qoder CN / Trae CN / WorkBuddy（库库、豆包暂不参与）
     python checkin.py qoder claim    # 只跑 Qoder，并把参数透传给 checkin_qoder.py
     python checkin.py trae
     python checkin.py workbuddy
     python checkin.py kuku           # 库库脱机接口已失效，保留手动入口；日常由姊妹 CDP 项目负责
-    python checkin.py doubao
+    python checkin.py doubao         # 豆包疑似被风控拦截（710010702），保留手动入口，日常不自动跑
     python checkin.py all --dry-run  # --dry-run 只透传给支持的脚本（Qoder / 库库 / 豆包），其余忽略
     python checkin.py all --no-push  # 只签到、不推送飞书（测试用）
     python checkin.py all --feishu <url>  # 临时指定飞书 webhook（覆盖 config.json）
 
 各家互相独立：某个客户端未安装/未登录只会让该家失败，不影响其余。
 最终退出码 = 所有已尝试脚本退出码的按位或（0 表示全部成功）。
-计划任务里用一条 `pythonw checkin.py all` 即可覆盖当前启用的几家；库库暂不参与，
-由姊妹 CDP 项目 `kuku-ai-daily-checkin` 负责。
+计划任务里用一条 `pythonw checkin.py all` 即可覆盖当前启用的几家；库库由姊妹 CDP 项目
+`kuku-ai-daily-checkin` 负责，豆包脱机签到疑似被风控拦截，两者均暂不参与 all。
 
 飞书推送（feishu_notify.py）：跑完汇总各家状态发一条群机器人交互卡片
     （卡片发送失败自动回退纯文本）。内容含「积分与过期」小节：各家余额、
@@ -47,8 +47,10 @@ SCRIPTS = {
     "doubao": ("checkin_doubao.py", []),
 }
 # 库库脱机接口已失效（2026-10 活动改用 App 注入的 jsToken），暂不参与 all；
-# 需要恢复时把 "kuku" 加回，或直接 `checkin.py kuku` 手动跑。
-ALL_ORDER = ["qoder", "trae", "workbuddy", "doubao"]
+# 豆包 2026-11-04 起同样暂不参与：landing/checkin 恒返回 710010702，疑似脱机请求缺少客户端
+# 指纹（msToken / a_bogus 等风控参数）被风控拦截，而在客户端里手动签到是可以的。
+# 需要恢复时把 "kuku" / "doubao" 加回，或先 `checkin.py kuku`、`checkin.py doubao` 手动跑。
+ALL_ORDER = ["qoder", "trae", "workbuddy"]
 DISPLAY_NAMES = {
     "qoder": "Qoder CN",
     "trae": "Trae CN",
@@ -143,10 +145,9 @@ def credits_line(name: str, summary: dict) -> str:
         parts.append(f"最近到期 {nearest['expire']}（{cc.fmt_num(nearest['credits'])}）")
     expiring = summary.get("expiring_7d")
     if expiring:
-        est = "~" if summary.get("expiring_7d_estimated") else ""
-        parts.append(f"7天内到期 {est}{cc.fmt_num(expiring)}")
-    if summary.get("note"):
-        parts.append(summary["note"])
+        parts.append(f"7天内到期 {cc.fmt_num(expiring)}")
+    if summary.get("untracked_note"):
+        parts.append(summary["untracked_note"])
     return f"{DISPLAY_NAMES[name]}：" + "｜".join(parts)
 
 
@@ -183,11 +184,10 @@ def card_credits_line(name: str, summary: dict) -> str:
         parts.append(f"最近到期 **{nearest['expire']}**（{cc.fmt_num(nearest['credits'])}）")
     expiring = summary.get("expiring_7d")
     if expiring:
-        est = "~" if summary.get("expiring_7d_estimated") else ""
-        parts.append(f"7 天内到期 **{est}{cc.fmt_num(expiring)}**")
+        parts.append(f"7 天内到期 **{cc.fmt_num(expiring)}**")
     line = f"**{DISPLAY_NAMES[name]}**　" + "　|　".join(parts)
-    if summary.get("note"):
-        line += f"\n<font color='grey'>{md_escape(summary['note'])}</font>"
+    if summary.get("untracked_note"):
+        line += f"\n<font color='grey'>{md_escape(summary['untracked_note'])}</font>"
     return line
 
 
